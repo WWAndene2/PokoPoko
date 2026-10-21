@@ -226,7 +226,7 @@ Rappel légal : les **règles** du genre sont libres, mais le nom « Puyo », le
 | Puyo Puyo 15th / 20th | Dizaines de **règles alternatives** (Bombe, Sous-marin, Excavation, Glace…) | **Fêtes** (9.7) |
 | Puyo Puyo Tetris | Mélange avec un autre genre, **Swap** et **Fusion** | **Mode Mash-up** (9.8), avec un genre maison |
 | Puyo Puyo!! Quest | RPG de cartes déclenché par les éclatements | **Donjon** (9.11) |
-| Puyo Puyo Champions / eSport | **Règles compétitives figées**, classement, replays | **Règle Classique** (section 8) + 10.9 |
+| Puyo Puyo Champions / eSport | **Règles compétitives figées**, classement, replays | **Règle Classique** (section 8) + 9.9 |
 
 ### 9.2 Tournée (mode histoire)
 - Suite de **10 adversaires IA** de plus en plus forts, chacun avec un style (bâtisseur de longues chaînes, attaquant rapide, défenseur…).
