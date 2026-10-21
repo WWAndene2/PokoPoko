@@ -1,18 +1,26 @@
 extends Node2D
 ## Screens (menu, solo, versus AI, result), rendering and touch input.
 ## Match rules live in Player / Board, the computer opponent in AI.
+## Visual style: framed boards per player, stepped NEXT panels, big score digits,
+## name bars with Poko avatars, win stars and a rotating light-ray background.
 
 enum Screen { MENU, PLAYING, RESULT }
 
 # Poko elements, indexed by board color - 1
 enum Element { AQUA, BLAZE, LEAF, SUNNY, NOVA }
 const COLORS := [Color("#4fb8ff"), Color("#ff5a4f"), Color("#7ee36b"), Color("#ffd84f"), Color("#9b6bff")]
-const GARBAGE_COLOR := Color("#8e88a3")
+const GARBAGE_COLOR := Color("#d9d4e8")
 const BG := Color("#1b1430")
-const PANEL := Color("#2a2048")
-const MUTED := Color("#a99cc9")
+const INK := Color("#1b1430")
+const BOARD_BG := Color("#1a1838")
+const MUTED := Color("#c9bfe6")
 const ACCENT := Color("#ffcf5a")
+const CHAIN_FILL := Color("#c6ff4f")
+const PLAYER_COLORS := [Color("#2f8fff"), Color("#ff4f6a")]
+const PLAYER_AVATAR := [Element.AQUA, Element.BLAZE]
 const SAVE_PATH := "user://save.cfg"
+const ROUNDS_TO_WIN := 2
+const CENTER_W := 76.0 # column between the two boards holding the NEXT panels
 
 # Margin time: after MARGIN_START seconds, points per garbage drop by 25 % every MARGIN_STEP
 const MARGIN_START := 96.0
@@ -21,7 +29,7 @@ const MARGIN_STEP := 16.0
 # Pending garbage icons, biggest first: [value, color, radius factor]
 const GARBAGE_ICONS := [
 	[720, Color("#ffcf5a"), 0.5], [360, Color("#9b6bff"), 0.46], [180, Color("#ffe79a"), 0.42],
-	[30, Color("#b07a4f"), 0.4], [6, GARBAGE_COLOR, 0.34], [1, GARBAGE_COLOR, 0.2],
+	[30, Color("#ff7a4f"), 0.4], [6, GARBAGE_COLOR, 0.36], [1, GARBAGE_COLOR, 0.22],
 ]
 
 const MENU_ITEMS := [
@@ -34,14 +42,19 @@ const MENU_ITEMS := [
 var screen := Screen.MENU
 var players: Array[Player] = []
 var ai: AI = null
+var ai_level := -1
 var elapsed := 0.0
+var clock := 0.0 # always running, drives background animation
 var won := false
+var wins := [0, 0]
+var match_over := false
 var best := 0
 var font: Font = ThemeDB.fallback_font
 
 # Per-player visual state
 var chain_text := ["", ""]
 var chain_text_t := [0.0, 0.0]
+const CHAIN_TEXT_TIME := 1.0
 var shake := 0.0
 
 # Touch tracking
@@ -53,12 +66,22 @@ var touching := false
 
 
 func _ready() -> void:
+	var f = load("res://assets/fonts/FredokaOne-Regular.ttf")
+	if f is Font:
+		font = f
 	var cfg := ConfigFile.new()
 	if cfg.load(SAVE_PATH) == OK:
 		best = cfg.get_value("score", "best", 0)
 
 
-func _start(ai_level: int) -> void:
+func _start(level: int) -> void:
+	ai_level = level
+	wins = [0, 0]
+	match_over = false
+	_start_round()
+
+
+func _start_round() -> void:
 	var seed_value := randi()
 	players.clear()
 	var human := Player.new()
@@ -79,8 +102,13 @@ func _start(ai_level: int) -> void:
 func _end(human_won: bool) -> void:
 	won = human_won
 	screen = Screen.RESULT
+	if players.size() == 2:
+		wins[0 if human_won else 1] += 1
+		match_over = wins.max() >= ROUNDS_TO_WIN
+		return
+	match_over = true
 	var s := players[0].score
-	if players.size() == 1 and s > best:
+	if s > best:
 		best = s
 		var cfg := ConfigFile.new()
 		cfg.set_value("score", "best", best)
@@ -88,6 +116,7 @@ func _end(human_won: bool) -> void:
 
 
 func _process(delta: float) -> void:
+	clock += delta
 	if screen == Screen.PLAYING:
 		elapsed += delta
 		if players.size() == 2 and elapsed > MARGIN_START:
@@ -113,13 +142,13 @@ func _handle_events(i: int) -> void:
 			"chain":
 				if e[1] >= 2:
 					chain_text[i] = "%d chaînes !" % e[1]
-					chain_text_t[i] = 0.9
+					chain_text_t[i] = CHAIN_TEXT_TIME
 				if i == 0:
 					shake = minf(4.0 + e[1] * 3.0, 20.0)
 					Input.vibrate_handheld(mini(30 + e[1] * 20, 150))
 			"all_clear":
 				chain_text[i] = "Grille vide !"
-				chain_text_t[i] = 1.2
+				chain_text_t[i] = CHAIN_TEXT_TIME * 1.3
 			"attack":
 				players[1 - i].pending_garbage += e[1]
 			"dead":
@@ -130,10 +159,6 @@ func _handle_events(i: int) -> void:
 
 # --- Input -------------------------------------------------------------------
 
-func _human() -> Player:
-	return players[0] if screen == Screen.PLAYING else null
-
-
 func _unhandled_input(event: InputEvent) -> void:
 	var vp := get_viewport_rect().size
 	if screen != Screen.PLAYING:
@@ -142,7 +167,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif event is InputEventKey and event.pressed and event.keycode in [KEY_ENTER, KEY_SPACE]:
 			_menu_tap(Vector2(vp.x / 2, _menu_y(0)))
 		return
-	var p := _human()
+	var p := players[0]
 	if event is InputEventScreenTouch:
 		if event.pressed:
 			touching = true
@@ -187,69 +212,178 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _menu_y(i: int) -> float:
-	return get_viewport_rect().size.y * 0.5 + i * 110
+	return get_viewport_rect().size.y * 0.5 + i * 115
 
 
 func _menu_tap(at: Vector2) -> void:
 	if screen == Screen.RESULT:
-		screen = Screen.MENU
+		if match_over:
+			screen = Screen.MENU
+		else:
+			_start_round()
 		return
 	for i in MENU_ITEMS.size():
-		if absf(at.y - _menu_y(i)) < 45:
+		if absf(at.y - _menu_y(i)) < 48:
 			_start(MENU_ITEMS[i][1])
 			return
 
 
 # --- Layout ------------------------------------------------------------------
 
+func _versus() -> bool:
+	return players.size() == 2
+
+
 func _cell() -> float:
 	var vp := get_viewport_rect().size
-	if players.size() == 2:
-		return floor(minf((vp.x - 48) / (Board.COLS * 2), (vp.y - 330) / Board.ROWS))
-	return floor(minf((vp.x - 32) / Board.COLS, (vp.y - 300) / Board.ROWS))
+	if _versus():
+		return floor(minf((vp.x - 56 - CENTER_W) / (Board.COLS * 2), (vp.y - 480) / Board.ROWS))
+	return floor(minf((vp.x - 40 - CENTER_W - 16) / Board.COLS, (vp.y - 480) / Board.ROWS))
 
 
+func _board_size() -> Vector2:
+	return Vector2(Board.COLS, Board.ROWS) * _cell()
+
+
+## Top-left corner of player i's grid (first visible row).
 func _origin(i: int) -> Vector2:
 	var vp := get_viewport_rect().size
-	var c := _cell()
-	var w := c * Board.COLS
-	if players.size() == 2:
-		return Vector2(16 + i * (w + 16), 230)
-	return Vector2((vp.x - w) / 2, 230)
+	var size := _board_size()
+	var y := maxf(190.0, (vp.y - size.y) / 2 - 70)
+	if _versus():
+		return Vector2(20 if i == 0 else vp.x - 20 - size.x, y)
+	return Vector2((vp.x - size.x - CENTER_W - 16) / 2, y)
 
 
 # --- Rendering ---------------------------------------------------------------
 
 func _draw() -> void:
 	var vp := get_viewport_rect().size
-	draw_rect(Rect2(Vector2.ZERO, vp), BG)
+	_draw_background(vp)
 	if screen == Screen.MENU:
 		_draw_menu(vp)
 		return
 	for i in players.size():
 		_draw_player(i)
-	if players.size() == 2:
-		var bottom := _origin(0).y + _cell() * Board.ROWS + 60
-		_label_centered("%d:%02d" % [int(elapsed) / 60, int(elapsed) % 60], bottom, 30, MUTED)
+	_draw_top_bar(vp)
+	_draw_bottom_bar(vp)
 	if screen == Screen.RESULT:
-		draw_rect(Rect2(Vector2.ZERO, vp), Color(BG, 0.85))
-		var title := ("Victoire !" if won else "Défaite…") if players.size() == 2 else "Fin de partie"
-		_label_centered(title, vp.y * 0.4, 80, ACCENT)
-		_label_centered("Score : %d" % players[0].score, vp.y * 0.48, 40, Color.WHITE)
-		if players.size() == 1:
-			_label_centered("Record : %d" % best, vp.y * 0.53, 30, MUTED)
-		_label_centered("Touchez pour continuer", vp.y * 0.65, 34, Color.WHITE)
+		_draw_result(vp)
+
+
+func _draw_background(vp: Vector2) -> void:
+	draw_rect(Rect2(Vector2.ZERO, vp), Color("#2a1650"))
+	# Rotating light rays from behind the boards
+	var center := Vector2(vp.x / 2, vp.y * 0.42)
+	var rays := 18
+	var radius := vp.length()
+	for k in rays:
+		if k % 2 == 1:
+			continue
+		var a0 := clock * 0.08 + TAU * k / rays
+		var a1 := a0 + TAU / rays
+		var tri := PackedVector2Array([center, center + Vector2.from_angle(a0) * radius, center + Vector2.from_angle(a1) * radius])
+		draw_colored_polygon(tri, Color(1, 1, 1, 0.05))
+	# Soft colored glows in the corners
+	for g in [[Vector2(0, 0), COLORS[Element.AQUA]], [Vector2(vp.x, 0), COLORS[Element.BLAZE]],
+			[Vector2(0, vp.y), COLORS[Element.LEAF]], [Vector2(vp.x, vp.y), COLORS[Element.NOVA]]]:
+		for s in 4:
+			draw_circle(g[0], vp.x * (0.55 - s * 0.1), Color(g[1], 0.05))
+
+
+func _panel(rect: Rect2, fill: Color, border: Color, border_w: int = 6, radius: int = 16) -> void:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = fill
+	sb.border_color = border
+	sb.set_border_width_all(border_w)
+	sb.set_corner_radius_all(radius)
+	sb.shadow_color = Color(0, 0, 0, 0.35)
+	sb.shadow_size = 8
+	sb.shadow_offset = Vector2(0, 4)
+	draw_style_box(sb, rect)
+
+
+## Text with a thick dark outline, the "arcade" look used for scores and callouts.
+func _text(text: String, pos: Vector2, size: int, fill: Color, align := HORIZONTAL_ALIGNMENT_LEFT, width := -1.0, outline := 0) -> void:
+	var o := outline if outline > 0 else maxi(4, size / 6)
+	draw_string_outline(font, pos, text, align, width, size, o, Color(INK, fill.a))
+	draw_string(font, pos, text, align, width, size, fill)
+
+
+func _text_centered(text: String, y: float, size: int, fill: Color) -> void:
+	_text(text, Vector2(0, y), size, fill, HORIZONTAL_ALIGNMENT_CENTER, get_viewport_rect().size.x)
 
 
 func _draw_menu(vp: Vector2) -> void:
-	_label_centered("PokoPoko", vp.y * 0.25, 110, ACCENT)
-	_label_centered("Record solo : %d" % best, vp.y * 0.32, 28, MUTED)
+	# Logo with a bouncing Poko of each element
+	for k in 5:
+		var bounce := absf(sin(clock * 3.0 + k * 0.7)) * 18
+		_draw_blob(Vector2(vp.x / 2 - 190 + k * 76, vp.y * 0.13 - bounce), k + 1, 72)
+	_text_centered("PokoPoko", vp.y * 0.3, 120, ACCENT)
+	_text_centered("Record solo : %d" % best, vp.y * 0.36, 30, MUTED)
 	for i in MENU_ITEMS.size():
 		var y := _menu_y(i)
-		draw_rect(Rect2(vp.x * 0.15, y - 42, vp.x * 0.7, 84), PANEL)
-		_label_centered(MENU_ITEMS[i][0], y + 13, 36, Color.WHITE)
-	_label_centered("Glisser ↔ déplacer · Toucher gauche/droite tourner", vp.y * 0.9, 22, MUTED)
-	_label_centered("Glisser ↓ lentement : descente · vite : chute", vp.y * 0.93, 22, MUTED)
+		var color: Color = PLAYER_COLORS[0] if i == 0 else COLORS[[0, Element.LEAF, Element.SUNNY, Element.BLAZE][i]].darkened(0.15)
+		_panel(Rect2(vp.x * 0.13, y - 44, vp.x * 0.74, 88), Color(BOARD_BG, 0.9), color, 6, 44)
+		_text_centered(MENU_ITEMS[i][0], y + 14, 38, Color.WHITE)
+	_text_centered("Glisser : déplacer   ·   Toucher gauche / droite : tourner", vp.y * 0.92, 22, MUTED)
+	_text_centered("Glisser vers le bas : descendre   ·   vite : chute", vp.y * 0.95, 22, MUTED)
+
+
+func _draw_top_bar(vp: Vector2) -> void:
+	var names := ["TOI", "IA"] if _versus() else ["SOLO"]
+	for i in names.size():
+		var w := vp.x / 2 - 24 if _versus() else vp.x - 40
+		var x := 16.0 if i == 0 else vp.x / 2 + 8
+		var rect := Rect2(x, 40, w, 64)
+		_panel(rect, PLAYER_COLORS[i], Color.WHITE, 4, 32)
+		# Avatar: a big Poko at the outer end of the bar
+		var av := 88.0
+		var av_x := rect.position.x - 4 if i == 0 else rect.end.x - av + 4
+		draw_circle(Vector2(av_x + av / 2, rect.get_center().y), av / 2, Color.WHITE)
+		_draw_blob(Vector2(av_x + 4, rect.get_center().y - av / 2 + 4), PLAYER_AVATAR[i] + 1, av - 8)
+		var tx: float = rect.position.x + (av if i == 0 else 16)
+		_text(names[i], Vector2(tx, rect.position.y + 46), 36, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, w - av - 16, 6)
+
+
+func _draw_bottom_bar(vp: Vector2) -> void:
+	var y := vp.y - 70
+	if _versus():
+		_panel(Rect2(vp.x / 2 - 170, y - 34, 340, 68), Color(BOARD_BG, 0.95), Color.WHITE, 4, 34)
+		_text_centered("VICTOIRES", y + 12, 30, Color.WHITE)
+		for i in 2:
+			for k in ROUNDS_TO_WIN:
+				var cx := vp.x / 2 + (-1 if i == 0 else 1) * (128 - k * 26)
+				_draw_star(Vector2(cx, y), 14, ACCENT if wins[i] > k else Color(1, 1, 1, 0.25))
+		_text_centered("%d:%02d" % [int(elapsed) / 60, int(elapsed) % 60], y - 52, 30, MUTED)
+
+
+func _draw_star(c: Vector2, r: float, color: Color) -> void:
+	var pts := PackedVector2Array()
+	for k in 10:
+		var rr := r if k % 2 == 0 else r * 0.45
+		pts.append(c + Vector2.from_angle(-PI / 2 + k * PI / 5) * rr)
+	draw_colored_polygon(pts, color)
+
+
+func _draw_result(vp: Vector2) -> void:
+	draw_rect(Rect2(Vector2.ZERO, vp), Color(0, 0, 0, 0.55))
+	var title: String
+	if not _versus():
+		title = "Fin de partie"
+	elif match_over:
+		title = "Victoire !" if won else "Défaite…"
+	else:
+		title = "Manche gagnée !" if won else "Manche perdue"
+	_panel(Rect2(40, vp.y * 0.33, vp.x - 80, vp.y * 0.34), Color(BOARD_BG, 0.95), PLAYER_COLORS[0 if won or not _versus() else 1], 8, 28)
+	_text_centered(title, vp.y * 0.43, 76, ACCENT)
+	if _versus():
+		_text_centered("%d  -  %d" % wins, vp.y * 0.51, 56, Color.WHITE)
+	else:
+		_text_centered("Score : %d" % players[0].score, vp.y * 0.5, 44, Color.WHITE)
+		_text_centered("Record : %d" % best, vp.y * 0.55, 32, MUTED)
+	var next := "Touchez pour continuer" if match_over else "Touchez pour la manche suivante"
+	_text_centered(next, vp.y * 0.62, 30, Color.WHITE)
 
 
 func _draw_player(i: int) -> void:
@@ -257,29 +391,43 @@ func _draw_player(i: int) -> void:
 	var b := p.board
 	var cell := _cell()
 	var origin := _origin(i)
+	var size := _board_size()
 	var jitter := Vector2(randf_range(-shake, shake), randf_range(-shake, shake)) if i == 0 and shake > 0 else Vector2.ZERO
 	var at := func(x: float, y: float) -> Vector2: return origin + jitter + Vector2(x, y - Board.HIDDEN) * cell
-	var w := cell * Board.COLS
 
-	# Header: score, next two pairs, pending garbage
-	_label(str(p.score), origin + Vector2(0, -150), 34 if players.size() == 2 else 44, Color.WHITE)
-	if players.size() == 1:
-		_label("Record %d" % best, origin + Vector2(0, -112), 22, MUTED)
-	else:
-		_label("Toi" if i == 0 else "IA", origin + Vector2(0, -190), 24, MUTED)
-	var s := cell * 0.75
-	for k in mini(2, b.queue.size()):
-		var nxt: Array = b.queue[k]
-		var scale := 1.0 if k == 0 else 0.7
-		var np := origin + Vector2(w - s * (2.3 - k * 1.1), -190 + k * s * 0.3)
-		_draw_blob(np, nxt[1], s * scale)
-		_draw_blob(np + Vector2(0, s * scale), nxt[0], s * scale)
-	_draw_pending(p.pending_garbage, origin + Vector2(0, -60), cell)
+	# Frame: a strip above the grid shows incoming garbage
+	var strip := cell * 0.9
+	_panel(Rect2(origin + jitter - Vector2(8, strip + 8), size + Vector2(16, strip + 16)), BOARD_BG, PLAYER_COLORS[i], 8, 18)
+	draw_rect(Rect2(origin + jitter, size), Color(PLAYER_COLORS[i], 0.07))
+	for x in range(1, Board.COLS):
+		draw_line(origin + jitter + Vector2(x * cell, 0), origin + jitter + Vector2(x * cell, size.y), Color(1, 1, 1, 0.04), 2)
+	_draw_pending(p.pending_garbage, origin + jitter + Vector2(0, -strip / 2 - 4), cell)
 
-	draw_rect(Rect2(origin + jitter, Vector2(Board.COLS, Board.ROWS) * cell).grow(6), PANEL)
-	draw_rect(Rect2(at.call(Board.SPAWN_COL, Board.HIDDEN), Vector2(cell, cell)), Color(COLORS[Element.BLAZE], 0.15))
+	# Spawn marker: a red cross where a blocked spawn means defeat
+	if b.grid[Board.HIDDEN][Board.SPAWN_COL] == 0:
+		var xc: Vector2 = at.call(Board.SPAWN_COL + 0.5, Board.HIDDEN + 0.5)
+		var xr := cell * 0.28
+		draw_line(xc - Vector2(xr, xr), xc + Vector2(xr, xr), Color("#ff3b3b", 0.8), cell * 0.16)
+		draw_line(xc + Vector2(-xr, xr), xc + Vector2(xr, -xr), Color("#ff3b3b", 0.8), cell * 0.16)
 
 	var t := p.fall_progress()
+	var animating := p.state == Player.State.SETTLING or p.state == Player.State.GARBAGE
+	var still := func(c: Vector2i) -> bool:
+		return not (animating and p.drops.has(c)) and not (p.state == Player.State.POPPING and p.popping.has(c))
+
+	# Same-color neighbours melt together: draw bridges under the blobs
+	for y in range(Board.HIDDEN, Board.H):
+		for x in Board.COLS:
+			var color: int = b.grid[y][x]
+			if color == 0 or color == Board.GARBAGE or not still.call(Vector2i(x, y)):
+				continue
+			var c: Vector2 = at.call(x + 0.5, y + 0.5)
+			var bw := cell * 0.62
+			if x + 1 < Board.COLS and b.grid[y][x + 1] == color and still.call(Vector2i(x + 1, y)):
+				draw_rect(Rect2(c - Vector2(0, bw / 2), Vector2(cell, bw)), COLORS[color - 1])
+			if y + 1 < Board.H and b.grid[y + 1][x] == color and still.call(Vector2i(x, y + 1)):
+				draw_rect(Rect2(c - Vector2(bw / 2, 0), Vector2(bw, cell)), COLORS[color - 1])
+
 	for y in range(Board.HIDDEN, Board.H):
 		for x in Board.COLS:
 			var color: int = b.grid[y][x]
@@ -291,7 +439,7 @@ func _draw_player(i: int) -> void:
 				var flash := int(p.anim_t / 0.06) % 2 == 1
 				_draw_blob(at.call(x, y), color, cell, 1 + pt * 0.4, 1 - pt, Color.WHITE if flash else null)
 			else:
-				var off: float = p.drops.get(c, 0) * (1 - t)
+				var off: float = p.drops.get(c, 0) * (1 - t) if animating else 0.0
 				_draw_blob(at.call(x, y - off), color, cell)
 
 	if b.has_piece and p.state == Player.State.FALLING:
@@ -304,9 +452,52 @@ func _draw_player(i: int) -> void:
 			if pc[0].y + smooth >= Board.HIDDEN:
 				_draw_blob(at.call(pc[0].x, pc[0].y + smooth), pc[1], cell)
 
+	_draw_next(i, cell)
+
+	# Big score digits under the board
+	var digits := 44 if _versus() else 56
+	_text("%08d" % p.score, Vector2(origin.x - 8, origin.y + size.y + digits + 18), digits, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, size.x + 16)
+
+	# Chain callout pops in, then fades
 	if chain_text_t[i] > 0:
-		var size := 64 if players.size() == 1 else 40
-		draw_string(font, origin + Vector2(0, cell * Board.ROWS * 0.4), chain_text[i], HORIZONTAL_ALIGNMENT_CENTER, w, size, Color(ACCENT, minf(1.0, chain_text_t[i] * 3)))
+		var age: float = CHAIN_TEXT_TIME - chain_text_t[i]
+		var pop := minf(1.0, age / 0.12)
+		var fsize := int((40 if _versus() else 64) * (0.6 + 0.4 * pop + 0.15 * sin(minf(age, 0.3) / 0.3 * PI)))
+		var col := Color(CHAIN_FILL, minf(1.0, chain_text_t[i] * 3))
+		_text(chain_text[i], Vector2(origin.x - 8, origin.y + size.y * 0.42 - age * 30), fsize, col, HORIZONTAL_ALIGNMENT_CENTER, size.x + 16)
+
+
+## Stepped NEXT panel: next pair large, the one after smaller and offset.
+func _draw_next(i: int, cell: float) -> void:
+	var b := players[i].board
+	var origin := _origin(i)
+	var size := _board_size()
+	var s := cell * 0.95
+	var box := Vector2(s + 20, s * 2 + 20)
+	var small := 0.72
+	var box2 := Vector2(s * small + 16, s * small * 2 + 16)
+	var p0: Vector2
+	var p1: Vector2
+	if _versus():
+		var cx := get_viewport_rect().size.x / 2
+		if i == 0:
+			p0 = Vector2(origin.x + size.x + 10, origin.y - cell * 0.9 - 8)
+			p1 = Vector2(p0.x + 6, p0.y + box.y + 4)
+		else:
+			p0 = Vector2(origin.x - 10 - box.x, origin.y + box.y + box2.y + 10)
+			p1 = Vector2(origin.x - 10 - box2.x - 6, p0.y + box.y + 4)
+	else:
+		p0 = Vector2(origin.x + size.x + 20, origin.y - cell * 0.9 - 8)
+		p1 = Vector2(p0.x + 8, p0.y + box.y + 4)
+	_panel(Rect2(p0, box), Color(PLAYER_COLORS[i], 0.9), Color.WHITE, 4, 12)
+	_panel(Rect2(p1, box2), Color(PLAYER_COLORS[i], 0.75), Color.WHITE, 3, 10)
+	if b.queue.size() >= 2:
+		var n0: Array = b.queue[0]
+		var n1: Array = b.queue[1]
+		_draw_blob(p0 + Vector2(10, 10), n0[1], s)
+		_draw_blob(p0 + Vector2(10, 10 + s), n0[0], s)
+		_draw_blob(p1 + Vector2(8, 8), n1[1], s * small)
+		_draw_blob(p1 + Vector2(8, 8 + s * small), n1[0], s * small)
 
 
 ## Incoming garbage shown as icons (crown 720, moon 360, star 180, rock 30, big 6, small 1).
@@ -317,32 +508,33 @@ func _draw_pending(n: int, at: Vector2, cell: float) -> void:
 		while n >= icon[0] and shown < 6:
 			n -= icon[0]
 			var r: float = cell * icon[2]
-			draw_circle(at + Vector2(x + cell * 0.5, 0), r, icon[1])
-			x += cell * 0.9
+			var c := at + Vector2(x + cell * 0.5, 0)
+			if icon[0] >= 180:
+				_draw_star(c, r * 1.2, icon[1])
+			else:
+				draw_circle(c, r, icon[1])
+				draw_circle(c + Vector2(-r * 0.35, 0), r * 0.18, INK)
+				draw_circle(c + Vector2(r * 0.35, 0), r * 0.18, INK)
+			x += cell
 			shown += 1
 
 
 ## `kind` is a board value: 1..5 element, Board.GARBAGE for nuisance.
 func _draw_blob(at: Vector2, kind: int, size: float, scale: float = 1.0, alpha: float = 1.0, tint: Variant = null) -> void:
-	var r := (size / 2 - 3) * scale
+	var r := (size / 2 - 2) * scale
 	var c := at + Vector2(size, size) / 2
 	var base: Color = GARBAGE_COLOR if kind == Board.GARBAGE else COLORS[kind - 1]
-	draw_circle(c, r, Color(tint if tint != null else base, alpha))
-	draw_circle(c - Vector2(r, r) * 0.35, r * 0.3, Color(1, 1, 1, 0.35 * alpha))
+	var fill: Color = tint if tint != null else base
+	draw_circle(c + Vector2(0, r * 0.08), r, Color(base.darkened(0.35), alpha)) # bottom shade
+	draw_circle(c, r * 0.96, Color(fill, alpha))
+	draw_circle(c - Vector2(r, r) * 0.35, r * 0.28, Color(1, 1, 1, 0.45 * alpha))
 	if kind == Board.GARBAGE:
-		var ink := Color(BG, alpha * 0.6)
-		draw_circle(c + Vector2(-r * 0.3, 0), r * 0.08, ink)
-		draw_circle(c + Vector2(r * 0.3, 0), r * 0.08, ink)
+		# Nuisance: big empty eyes, no emotion
+		for sx in [-1, 1]:
+			draw_circle(c + Vector2(sx * r * 0.32, 0), r * 0.24, Color(INK, alpha * 0.7))
+			draw_circle(c + Vector2(sx * r * 0.32, 0), r * 0.14, Color(1, 1, 1, alpha))
 	else:
-		_draw_face(c, r, kind - 1, Color(BG, alpha))
-
-
-func _label(text: String, at: Vector2, size: int, color: Color) -> void:
-	draw_string(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
-
-
-func _label_centered(text: String, y: float, size: int, color: Color) -> void:
-	draw_string(font, Vector2(0, y), text, HORIZONTAL_ALIGNMENT_CENTER, get_viewport_rect().size.x, size, color)
+		_draw_face(c, r, kind - 1, Color(INK, alpha))
 
 
 ## Each element has its own expression.

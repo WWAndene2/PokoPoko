@@ -24,3 +24,6 @@ ou iOS (macOS + Xcode requis).
 - Glisser ↔ : déplacer
 - Toucher la moitié droite / gauche de l'écran : tourner à droite / à gauche
 - Glisser ↓ lentement et maintenir : descente rapide · Glisser ↓ vite : chute immédiate
+
+## Crédits
+- Police Fredoka One © Milena B Brandao — SIL Open Font License 1.1 (`assets/fonts/OFL.txt`).
