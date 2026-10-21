@@ -28,24 +28,24 @@
 ### 2.2 La paire
 - Chaque paire contient 2 Pokos de couleurs tirées au hasard (même couleur possible).
 - La paire apparaît le satellite **au-dessus** du pivot.
-- La **paire suivante** est toujours visible (et la suivante après elle 🔜, soit 2 paires d'avance).
+- La **paire suivante** est toujours visible et la suivante après elle (2 paires d'avance) ✅.
 - Une **ombre** montre où la paire va atterrir.
 
 ### 2.3 Couleurs
 - Chaque couleur est un **élément** avec sa propre personnalité (voir section 10).
 - **4 éléments** en mode normal : Aqua, Blaze, Leaf, Sunny ✅.
 - **5 éléments** en mode difficile (+ Nova) 💡.
-- Le tirage est fait par un générateur à **graine** (seed) : en multijoueur, les deux joueurs reçoivent **exactement la même suite de paires** (équité) 🔜.
+- Le tirage est fait par un générateur à **graine** (seed) : en versus, les deux joueurs reçoivent **exactement la même suite de paires** (équité) ✅.
 
 ### 2.4 Contrôles
 
 | Action | Tactile | Clavier (test) |
 |---|---|---|
 | Déplacer | Glisser à gauche / droite (1 case par ~0,8 case glissée) | ← → |
-| Tourner (sens horaire) | Toucher bref | ↑ ou X |
-| Tourner (sens anti-horaire) 🔜 | Toucher à 2 doigts | Z |
-| Descente rapide 🔜 | Maintenir le doigt en glissant vers le bas | ↓ maintenu |
-| Chute immédiate | Glisser rapidement vers le bas | Espace |
+| Tourner (sens horaire) | Toucher bref sur la moitié **droite** de l'écran | ↑ ou X |
+| Tourner (sens anti-horaire) ✅ | Toucher bref sur la moitié **gauche** de l'écran | Z |
+| Descente rapide ✅ | Glisser lentement vers le bas et maintenir (+1 point par case) | ↓ maintenu |
+| Chute immédiate | Glisser **vite** vers le bas (+2 points par case) | Espace |
 
 ### 2.5 Rotation
 1. Rotation sur place si la place est libre.
@@ -56,9 +56,9 @@
 ### 2.6 Chute et pose
 - La paire descend d'une case toutes les **0,70 s** au départ.
 - La vitesse augmente à chaque pose (−4 ms), jusqu'à **0,18 s** minimum.
-- **Temps de grâce** 🔜 : quand la paire touche le sol, le joueur a encore **0,5 s** pour la déplacer ou la tourner (remis à zéro à chaque action, 8 fois maximum).
+- **Temps de grâce** ✅ : quand la paire touche le sol, le joueur a encore **0,5 s** pour la déplacer ou la tourner (remis à zéro à chaque action, 8 fois maximum).
 - Une fois posée, la paire **se sépare** : chaque Poko tombe seul jusqu'au premier obstacle.
-- Chute immédiate : **+1 point** par case descendue.
+- Descente rapide : **+1 point** par case ; chute immédiate : **+2 points** par case. En descente rapide, la paire se pose dès qu'elle touche le sol.
 
 ### 2.7 Éclatement
 - Un groupe de **4 Pokos ou plus** de même couleur, reliés **horizontalement ou verticalement** (pas en diagonale), éclate.
@@ -108,11 +108,11 @@ score = 10 × P × (Puissance de chaîne + Bonus de couleurs + Bonus de groupe)
 - 4 Pokos au 2ᵉ maillon → 10 × 4 × 8 = **320**
 - 4 Pokos au 5ᵉ maillon → 10 × 4 × 64 = **2 560**
 
-**Grille vide** 🔜 : vider entièrement la grille donne **+2 100 points**. En versus, l'attaque suivante reçoit **+30 grumeaux** en plus.
+**Grille vide** ✅ : vider entièrement la grille donne **+2 100 points**. En versus, l'attaque suivante reçoit **+30 grumeaux** en plus.
 
 ---
 
-## 4. Combat (versus) 🔜
+## 4. Combat (versus) ✅
 
 ### 4.1 Grumeaux
 - Chaque tranche de **70 points** marqués = **1 grumeau** envoyé à l'adversaire (le reste est gardé pour la suite).
@@ -121,7 +121,7 @@ score = 10 × P × (Puissance de chaîne + Bonus de couleurs + Bonus de groupe)
 - Un grumeau **disparaît** quand un groupe de Pokos éclate **juste à côté** de lui (horizontalement ou verticalement).
 - Un grumeau ne forme jamais de groupe et ne fait jamais partie d'une chaîne.
 
-### 4.2 Annonce des grumeaux
+### 4.2 Annonce des grumeaux (formes et couleurs provisoires ✅)
 Au-dessus de la grille, des icônes montrent les grumeaux en attente :
 
 | Icône | Valeur |
@@ -182,7 +182,7 @@ Ces mécaniques distinguent PokoPoko des autres jeux du genre. Chacune est **act
 |---|---|---|
 | **Solo infini** | ✅ | Survivre le plus longtemps possible, score maximal. La vitesse augmente. |
 | **Entraînement** | 🔜 | Pas de chute automatique, retour en arrière d'un coup, indice de chaîne. |
-| **Versus IA** | 🔜 | Combat avec grumeaux contre l'ordinateur, 5 niveaux (de « pose au hasard » à « prépare des chaînes de 6+ »). |
+| **Versus IA** | ✅ | Combat avec grumeaux contre l'ordinateur, 5 niveaux (de « pose au hasard » à « prépare des chaînes de 6+ »). |
 | **Défi du jour** | 🔜 | Même suite de paires pour tout le monde (même graine), 1 essai classé + essais libres, code à partager entre amis. |
 | **Puzzle** | 💡 | Grille imposée + liste de paires fixe : réaliser une chaîne de N maillons. |
 | **Fièvre** | 💡 | Voir 5.3. |

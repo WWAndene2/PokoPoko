@@ -9,6 +9,7 @@ const HIDDEN := 1 # row 0 is the hidden spawn row
 const H := ROWS + HIDDEN
 const SPAWN_COL := 2
 const POP_SIZE := 4
+const GARBAGE := 9 # grey nuisance Poko ("grumeau"): never groups, cleared by adjacent pops
 # Satellite offsets by rotation: up, right, down, left
 const ROT: Array[Vector2i] = [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 
@@ -17,7 +18,8 @@ const COLOR_BONUS := [0, 0, 3, 6, 12, 24]
 
 var grid: Array = [] # grid[y][x], 0 = empty, 1..n = color
 var num_colors := 4
-var rng := RandomNumberGenerator.new()
+var rng := RandomNumberGenerator.new() # pair sequence: same seed => same pairs for both players
+var garbage_rng := RandomNumberGenerator.new()
 
 # Falling pair: pivot at pos with color a, satellite at pos + ROT[rot] with color b
 var pos := Vector2i.ZERO
@@ -31,8 +33,10 @@ var queue: Array = []
 func _init(seed_value: int = -1) -> void:
 	if seed_value >= 0:
 		rng.seed = seed_value
+		garbage_rng.seed = seed_value + 1
 	else:
 		rng.randomize()
+		garbage_rng.randomize()
 	reset()
 
 
@@ -85,9 +89,18 @@ func move(dx: int) -> bool:
 
 
 func rotate_cw() -> bool:
+	return rotate(1)
+
+
+func rotate_ccw() -> bool:
+	return rotate(-1)
+
+
+## dir = 1 clockwise, -1 counter-clockwise
+func rotate(dir: int) -> bool:
 	if not has_piece:
 		return false
-	var r := (rot + 1) % 4
+	var r := (rot + dir + 4) % 4
 	# In place, wall kick, floor kick
 	for kick in [Vector2i.ZERO, Vector2i(-ROT[r].x, 0), Vector2i(0, -1)]:
 		if fits(pos + kick, r):
@@ -155,7 +168,7 @@ func find_groups() -> Array:
 		for x in COLS:
 			var color: int = grid[y][x]
 			var start := Vector2i(x, y)
-			if color == 0 or seen.has(start):
+			if color == 0 or color == GARBAGE or seen.has(start):
 				continue
 			var stack := [start]
 			var cells := []
@@ -195,3 +208,86 @@ static func chain_score(groups: Array, chain: int) -> int:
 func clear_cells(cells: Array) -> void:
 	for c in cells:
 		grid[c.y][c.x] = 0
+
+
+## Garbage cells (visible area) touching any of `cells`.
+func adjacent_garbage(cells: Array) -> Array:
+	var found := {}
+	for c in cells:
+		for d in ROT:
+			var n: Vector2i = c + d
+			if n.x >= 0 and n.x < COLS and n.y >= HIDDEN and n.y < H and grid[n.y][n.x] == GARBAGE:
+				found[n] = true
+	return found.keys()
+
+
+func is_empty() -> bool:
+	for row in grid:
+		for v in row:
+			if v != 0:
+				return false
+	return true
+
+
+## Drops `n` garbage Pokos spread evenly over the columns (remainder on random columns).
+## Returns [Vector2i destination, int fall_distance] for animation.
+func drop_garbage(n: int) -> Array:
+	var per := []
+	per.resize(COLS)
+	per.fill(n / COLS)
+	var cols := range(COLS)
+	for i in range(COLS - 1, 0, -1):
+		var j := garbage_rng.randi_range(0, i)
+		var t = cols[i]
+		cols[i] = cols[j]
+		cols[j] = t
+	for i in n % COLS:
+		per[cols[i]] += 1
+	var drops := []
+	for x in COLS:
+		var top := H
+		for y in H:
+			if grid[y][x] != 0:
+				top = y
+				break
+		for k in per[x]:
+			var y: int = top - 1 - k
+			if y < 0:
+				break
+			grid[y][x] = GARBAGE
+			drops.append([Vector2i(x, y), y + 2])
+	return drops
+
+
+func clone() -> Board:
+	var copy := Board.new(0)
+	copy.grid = grid.duplicate(true)
+	copy.num_colors = num_colors
+	return copy
+
+
+## Places a pair at column x / rotation r, drops it and resolves every chain.
+## Returns {ok, chains, points} — used by the AI. Mutates this board.
+func simulate_drop(x: int, r: int, ca: int, cb: int) -> Dictionary:
+	a = ca
+	b = cb
+	if not fits(Vector2i(x, HIDDEN), r):
+		return {"ok": false, "chains": 0, "points": 0}
+	pos = Vector2i(x, HIDDEN)
+	rot = r
+	has_piece = true
+	pos = ghost_pos()
+	lock()
+	var chains := 0
+	var points := 0
+	while true:
+		apply_gravity()
+		var groups := find_groups()
+		if groups.is_empty():
+			break
+		chains += 1
+		points += chain_score(groups, chains)
+		for g in groups:
+			clear_cells(adjacent_garbage(g.cells))
+			clear_cells(g.cells)
+	return {"ok": true, "chains": chains, "points": points}

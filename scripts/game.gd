@@ -1,201 +1,348 @@
 extends Node2D
-## Rendering, touch input and the falling / settling / popping state machine.
+## Screens (menu, solo, versus AI, result), rendering and touch input.
+## Match rules live in Player / Board, the computer opponent in AI.
 
-enum State { MENU, FALLING, SETTLING, POPPING, OVER }
+enum Screen { MENU, PLAYING, RESULT }
 
 # Poko elements, indexed by board color - 1
 enum Element { AQUA, BLAZE, LEAF, SUNNY, NOVA }
 const COLORS := [Color("#4fb8ff"), Color("#ff5a4f"), Color("#7ee36b"), Color("#ffd84f"), Color("#9b6bff")]
+const GARBAGE_COLOR := Color("#8e88a3")
 const BG := Color("#1b1430")
 const PANEL := Color("#2a2048")
+const MUTED := Color("#a99cc9")
 const ACCENT := Color("#ffcf5a")
-const SETTLE_TIME := 0.12
-const POP_TIME := 0.35
 const SAVE_PATH := "user://save.cfg"
 
-var board := Board.new()
-var state := State.MENU
-var cell := 64.0
-var origin := Vector2.ZERO
-var fall_timer := 0.0
-var fall_delay := 0.7
-var anim_t := 0.0
-var drops := {} # Vector2i -> fall distance
-var popping: Array = []
-var chain := 0
-var score := 0
+# Margin time: after MARGIN_START seconds, points per garbage drop by 25 % every MARGIN_STEP
+const MARGIN_START := 96.0
+const MARGIN_STEP := 16.0
+
+# Pending garbage icons, biggest first: [value, color, radius factor]
+const GARBAGE_ICONS := [
+	[720, Color("#ffcf5a"), 0.5], [360, Color("#9b6bff"), 0.46], [180, Color("#ffe79a"), 0.42],
+	[30, Color("#b07a4f"), 0.4], [6, GARBAGE_COLOR, 0.34], [1, GARBAGE_COLOR, 0.2],
+]
+
+const MENU_ITEMS := [
+	["Solo", -1],
+	["Versus IA · Facile", AI.Level.EASY],
+	["Versus IA · Normal", AI.Level.NORMAL],
+	["Versus IA · Difficile", AI.Level.HARD],
+]
+
+var screen := Screen.MENU
+var players: Array[Player] = []
+var ai: AI = null
+var elapsed := 0.0
+var won := false
 var best := 0
-var chain_text := ""
-var chain_text_t := 0.0
+var font: Font = ThemeDB.fallback_font
+
+# Per-player visual state
+var chain_text := ["", ""]
+var chain_text_t := [0.0, 0.0]
 var shake := 0.0
 
 # Touch tracking
 var touch_start := Vector2.ZERO
+var touch_start_t := 0
 var touch_last_x := 0.0
 var touch_moved := false
 var touching := false
-
-var font: Font = ThemeDB.fallback_font
 
 
 func _ready() -> void:
 	var cfg := ConfigFile.new()
 	if cfg.load(SAVE_PATH) == OK:
 		best = cfg.get_value("score", "best", 0)
-	get_viewport().size_changed.connect(_layout)
-	_layout()
 
 
-func _layout() -> void:
-	var vp := get_viewport_rect().size
-	cell = floor(min((vp.x - 32) / Board.COLS, (vp.y - 260) / Board.ROWS))
-	origin = Vector2((vp.x - cell * Board.COLS) / 2, 180)
+func _start(ai_level: int) -> void:
+	var seed_value := randi()
+	players.clear()
+	var human := Player.new()
+	human.start(seed_value, ai_level >= 0)
+	players.append(human)
+	ai = null
+	if ai_level >= 0:
+		var cpu := Player.new()
+		cpu.start(seed_value, true) # same seed: both players get the same pairs
+		players.append(cpu)
+		ai = AI.new(cpu, ai_level)
+	elapsed = 0.0
+	chain_text = ["", ""]
+	chain_text_t = [0.0, 0.0]
+	screen = Screen.PLAYING
 
 
-func start() -> void:
-	board.reset()
-	score = 0
-	fall_delay = 0.7
-	_spawn()
-
-
-func _spawn() -> void:
-	chain = 0
-	fall_timer = 0.0
-	if board.spawn():
-		state = State.FALLING
-	else:
-		_game_over()
-
-
-func _game_over() -> void:
-	state = State.OVER
-	if score > best:
-		best = score
+func _end(human_won: bool) -> void:
+	won = human_won
+	screen = Screen.RESULT
+	var s := players[0].score
+	if players.size() == 1 and s > best:
+		best = s
 		var cfg := ConfigFile.new()
 		cfg.set_value("score", "best", best)
 		cfg.save(SAVE_PATH)
 
 
-func _lock_and_resolve() -> void:
-	board.lock()
-	_settle()
-
-
-func _settle() -> void:
-	drops.clear()
-	for d in board.apply_gravity():
-		drops[d[0]] = d[1]
-	anim_t = 0.0
-	state = State.SETTLING
-
-
-func _check_pops() -> void:
-	var groups := board.find_groups()
-	if groups.is_empty():
-		fall_delay = max(0.18, fall_delay - 0.004)
-		_spawn()
-		return
-	chain += 1
-	score += Board.chain_score(groups, chain)
-	popping = []
-	for g in groups:
-		popping.append_array(g.cells)
-	if chain >= 2:
-		chain_text = "%d chaînes !" % chain
-		chain_text_t = 0.9
-	shake = min(4.0 + chain * 3.0, 20.0)
-	Input.vibrate_handheld(min(30 + chain * 20, 150))
-	anim_t = 0.0
-	state = State.POPPING
-
-
 func _process(delta: float) -> void:
-	match state:
-		State.FALLING:
-			fall_timer += delta
-			if fall_timer >= fall_delay:
-				fall_timer = 0.0
-				if not board.step_down():
-					_lock_and_resolve()
-		State.SETTLING:
-			anim_t += delta
-			if anim_t >= SETTLE_TIME:
-				_check_pops()
-		State.POPPING:
-			anim_t += delta
-			if anim_t >= POP_TIME:
-				board.clear_cells(popping)
-				popping = []
-				_settle()
-	chain_text_t = max(0.0, chain_text_t - delta)
-	shake = max(0.0, shake - delta * 60.0)
+	if screen == Screen.PLAYING:
+		elapsed += delta
+		if players.size() == 2 and elapsed > MARGIN_START:
+			var steps := int((elapsed - MARGIN_START) / MARGIN_STEP) + 1
+			var target := maxi(1, int(70 * pow(0.75, steps)))
+			for p in players:
+				p.target_points = target
+		if ai:
+			ai.update(delta)
+		for i in players.size():
+			players[i].update(delta)
+			_handle_events(i)
+	for i in 2:
+		chain_text_t[i] = maxf(0.0, chain_text_t[i] - delta)
+	shake = maxf(0.0, shake - delta * 60.0)
 	queue_redraw()
+
+
+func _handle_events(i: int) -> void:
+	var p := players[i]
+	for e in p.events:
+		match e[0]:
+			"chain":
+				if e[1] >= 2:
+					chain_text[i] = "%d chaînes !" % e[1]
+					chain_text_t[i] = 0.9
+				if i == 0:
+					shake = minf(4.0 + e[1] * 3.0, 20.0)
+					Input.vibrate_handheld(mini(30 + e[1] * 20, 150))
+			"all_clear":
+				chain_text[i] = "Grille vide !"
+				chain_text_t[i] = 1.2
+			"attack":
+				players[1 - i].pending_garbage += e[1]
+			"dead":
+				if screen == Screen.PLAYING:
+					_end(i != 0 and players.size() == 2)
+	p.events.clear()
 
 
 # --- Input -------------------------------------------------------------------
 
+func _human() -> Player:
+	return players[0] if screen == Screen.PLAYING else null
+
+
 func _unhandled_input(event: InputEvent) -> void:
-	if state == State.MENU or state == State.OVER:
-		if (event is InputEventScreenTouch and not event.pressed) or event.is_action_pressed("ui_accept"):
-			start()
+	var vp := get_viewport_rect().size
+	if screen != Screen.PLAYING:
+		if event is InputEventScreenTouch and not event.pressed:
+			_menu_tap(event.position)
+		elif event is InputEventKey and event.pressed and event.keycode in [KEY_ENTER, KEY_SPACE]:
+			_menu_tap(Vector2(vp.x / 2, _menu_y(0)))
 		return
+	var p := _human()
 	if event is InputEventScreenTouch:
 		if event.pressed:
 			touching = true
 			touch_start = event.position
+			touch_start_t = Time.get_ticks_msec()
 			touch_last_x = event.position.x
 			touch_moved = false
 		elif touching:
 			touching = false
+			p.soft_drop = false
 			var d: Vector2 = event.position - touch_start
-			if d.y > cell * 1.5 and d.y > abs(d.x):
-				_hard_drop()
+			var quick := Time.get_ticks_msec() - touch_start_t < 250
+			if quick and d.y > _cell() * 1.5 and d.y > abs(d.x) * 2:
+				p.hard_drop()
 			elif not touch_moved and d.length() < 12:
-				board.rotate_cw()
+				# Puyo-style two buttons: left half turns counter-clockwise, right half clockwise
+				p.rotate(-1 if event.position.x < vp.x / 2 else 1)
 	elif event is InputEventScreenDrag and touching:
-		var step := cell * 0.8
+		var step := _cell() * 0.8
 		while event.position.x - touch_last_x > step:
-			board.move(1)
+			p.move(1)
 			touch_last_x += step
 			touch_moved = true
 		while touch_last_x - event.position.x > step:
-			board.move(-1)
+			p.move(-1)
 			touch_last_x -= step
 			touch_moved = true
-	elif event is InputEventKey and event.pressed:
-		match event.keycode:
-			KEY_LEFT: board.move(-1)
-			KEY_RIGHT: board.move(1)
-			KEY_UP, KEY_X: board.rotate_cw()
-			KEY_DOWN:
-				if state == State.FALLING:
-					fall_timer = 0.0
-					if not board.step_down():
-						_lock_and_resolve()
-			KEY_SPACE: _hard_drop()
+		var d: Vector2 = event.position - touch_start
+		p.soft_drop = d.y > _cell() * 0.8 and d.y > abs(d.x) * 2
+	elif event is InputEventKey and not event.echo:
+		if event.keycode == KEY_DOWN:
+			p.soft_drop = event.pressed
+		elif event.pressed:
+			match event.keycode:
+				KEY_LEFT: p.move(-1)
+				KEY_RIGHT: p.move(1)
+				KEY_UP, KEY_X: p.rotate(1)
+				KEY_Z: p.rotate(-1)
+				KEY_SPACE: p.hard_drop()
+	elif event is InputEventKey and event.echo and event.keycode in [KEY_LEFT, KEY_RIGHT]:
+		p.move(-1 if event.keycode == KEY_LEFT else 1)
 
 
-func _hard_drop() -> void:
-	if state != State.FALLING:
+func _menu_y(i: int) -> float:
+	return get_viewport_rect().size.y * 0.5 + i * 110
+
+
+func _menu_tap(at: Vector2) -> void:
+	if screen == Screen.RESULT:
+		screen = Screen.MENU
 		return
-	while board.step_down():
-		score += 1
-	_lock_and_resolve()
+	for i in MENU_ITEMS.size():
+		if absf(at.y - _menu_y(i)) < 45:
+			_start(MENU_ITEMS[i][1])
+			return
+
+
+# --- Layout ------------------------------------------------------------------
+
+func _cell() -> float:
+	var vp := get_viewport_rect().size
+	if players.size() == 2:
+		return floor(minf((vp.x - 48) / (Board.COLS * 2), (vp.y - 330) / Board.ROWS))
+	return floor(minf((vp.x - 32) / Board.COLS, (vp.y - 300) / Board.ROWS))
+
+
+func _origin(i: int) -> Vector2:
+	var vp := get_viewport_rect().size
+	var c := _cell()
+	var w := c * Board.COLS
+	if players.size() == 2:
+		return Vector2(16 + i * (w + 16), 230)
+	return Vector2((vp.x - w) / 2, 230)
 
 
 # --- Rendering ---------------------------------------------------------------
 
-func _cell_pos(x: float, y: float) -> Vector2:
-	return origin + Vector2(x, y - Board.HIDDEN) * cell
+func _draw() -> void:
+	var vp := get_viewport_rect().size
+	draw_rect(Rect2(Vector2.ZERO, vp), BG)
+	if screen == Screen.MENU:
+		_draw_menu(vp)
+		return
+	for i in players.size():
+		_draw_player(i)
+	if players.size() == 2:
+		var bottom := _origin(0).y + _cell() * Board.ROWS + 60
+		_label_centered("%d:%02d" % [int(elapsed) / 60, int(elapsed) % 60], bottom, 30, MUTED)
+	if screen == Screen.RESULT:
+		draw_rect(Rect2(Vector2.ZERO, vp), Color(BG, 0.85))
+		var title := ("Victoire !" if won else "Défaite…") if players.size() == 2 else "Fin de partie"
+		_label_centered(title, vp.y * 0.4, 80, ACCENT)
+		_label_centered("Score : %d" % players[0].score, vp.y * 0.48, 40, Color.WHITE)
+		if players.size() == 1:
+			_label_centered("Record : %d" % best, vp.y * 0.53, 30, MUTED)
+		_label_centered("Touchez pour continuer", vp.y * 0.65, 34, Color.WHITE)
 
 
-func _draw_blob(at: Vector2, element: int, size: float, scale: float = 1.0, alpha: float = 1.0, tint: Variant = null) -> void:
+func _draw_menu(vp: Vector2) -> void:
+	_label_centered("PokoPoko", vp.y * 0.25, 110, ACCENT)
+	_label_centered("Record solo : %d" % best, vp.y * 0.32, 28, MUTED)
+	for i in MENU_ITEMS.size():
+		var y := _menu_y(i)
+		draw_rect(Rect2(vp.x * 0.15, y - 42, vp.x * 0.7, 84), PANEL)
+		_label_centered(MENU_ITEMS[i][0], y + 13, 36, Color.WHITE)
+	_label_centered("Glisser ↔ déplacer · Toucher gauche/droite tourner", vp.y * 0.9, 22, MUTED)
+	_label_centered("Glisser ↓ lentement : descente · vite : chute", vp.y * 0.93, 22, MUTED)
+
+
+func _draw_player(i: int) -> void:
+	var p := players[i]
+	var b := p.board
+	var cell := _cell()
+	var origin := _origin(i)
+	var jitter := Vector2(randf_range(-shake, shake), randf_range(-shake, shake)) if i == 0 and shake > 0 else Vector2.ZERO
+	var at := func(x: float, y: float) -> Vector2: return origin + jitter + Vector2(x, y - Board.HIDDEN) * cell
+	var w := cell * Board.COLS
+
+	# Header: score, next two pairs, pending garbage
+	_label(str(p.score), origin + Vector2(0, -150), 34 if players.size() == 2 else 44, Color.WHITE)
+	if players.size() == 1:
+		_label("Record %d" % best, origin + Vector2(0, -112), 22, MUTED)
+	else:
+		_label("Toi" if i == 0 else "IA", origin + Vector2(0, -190), 24, MUTED)
+	var s := cell * 0.75
+	for k in mini(2, b.queue.size()):
+		var nxt: Array = b.queue[k]
+		var scale := 1.0 if k == 0 else 0.7
+		var np := origin + Vector2(w - s * (2.3 - k * 1.1), -190 + k * s * 0.3)
+		_draw_blob(np, nxt[1], s * scale)
+		_draw_blob(np + Vector2(0, s * scale), nxt[0], s * scale)
+	_draw_pending(p.pending_garbage, origin + Vector2(0, -60), cell)
+
+	draw_rect(Rect2(origin + jitter, Vector2(Board.COLS, Board.ROWS) * cell).grow(6), PANEL)
+	draw_rect(Rect2(at.call(Board.SPAWN_COL, Board.HIDDEN), Vector2(cell, cell)), Color(COLORS[Element.BLAZE], 0.15))
+
+	var t := p.fall_progress()
+	for y in range(Board.HIDDEN, Board.H):
+		for x in Board.COLS:
+			var color: int = b.grid[y][x]
+			if color == 0:
+				continue
+			var c := Vector2i(x, y)
+			if p.state == Player.State.POPPING and p.popping.has(c):
+				var pt := p.anim_t / Player.POP_TIME
+				var flash := int(p.anim_t / 0.06) % 2 == 1
+				_draw_blob(at.call(x, y), color, cell, 1 + pt * 0.4, 1 - pt, Color.WHITE if flash else null)
+			else:
+				var off: float = p.drops.get(c, 0) * (1 - t)
+				_draw_blob(at.call(x, y - off), color, cell)
+
+	if b.has_piece and p.state == Player.State.FALLING:
+		var g := b.ghost_pos()
+		for pc in b.piece_cells(g):
+			if pc[0].y >= Board.HIDDEN:
+				_draw_blob(at.call(pc[0].x, pc[0].y), pc[1], cell, 0.45, 0.35)
+		var smooth := minf(1.0, p.fall_timer / p.fall_delay) if b.can_fall() else 0.0
+		for pc in b.piece_cells():
+			if pc[0].y + smooth >= Board.HIDDEN:
+				_draw_blob(at.call(pc[0].x, pc[0].y + smooth), pc[1], cell)
+
+	if chain_text_t[i] > 0:
+		var size := 64 if players.size() == 1 else 40
+		draw_string(font, origin + Vector2(0, cell * Board.ROWS * 0.4), chain_text[i], HORIZONTAL_ALIGNMENT_CENTER, w, size, Color(ACCENT, minf(1.0, chain_text_t[i] * 3)))
+
+
+## Incoming garbage shown as icons (crown 720, moon 360, star 180, rock 30, big 6, small 1).
+func _draw_pending(n: int, at: Vector2, cell: float) -> void:
+	var x := 0.0
+	var shown := 0
+	for icon in GARBAGE_ICONS:
+		while n >= icon[0] and shown < 6:
+			n -= icon[0]
+			var r: float = cell * icon[2]
+			draw_circle(at + Vector2(x + cell * 0.5, 0), r, icon[1])
+			x += cell * 0.9
+			shown += 1
+
+
+## `kind` is a board value: 1..5 element, Board.GARBAGE for nuisance.
+func _draw_blob(at: Vector2, kind: int, size: float, scale: float = 1.0, alpha: float = 1.0, tint: Variant = null) -> void:
 	var r := (size / 2 - 3) * scale
 	var c := at + Vector2(size, size) / 2
-	draw_circle(c, r, Color(tint if tint != null else COLORS[element], alpha))
+	var base: Color = GARBAGE_COLOR if kind == Board.GARBAGE else COLORS[kind - 1]
+	draw_circle(c, r, Color(tint if tint != null else base, alpha))
 	draw_circle(c - Vector2(r, r) * 0.35, r * 0.3, Color(1, 1, 1, 0.35 * alpha))
-	_draw_face(c, r, element, Color(BG, alpha))
+	if kind == Board.GARBAGE:
+		var ink := Color(BG, alpha * 0.6)
+		draw_circle(c + Vector2(-r * 0.3, 0), r * 0.08, ink)
+		draw_circle(c + Vector2(r * 0.3, 0), r * 0.08, ink)
+	else:
+		_draw_face(c, r, kind - 1, Color(BG, alpha))
+
+
+func _label(text: String, at: Vector2, size: int, color: Color) -> void:
+	draw_string(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
+
+
+func _label_centered(text: String, y: float, size: int, color: Color) -> void:
+	draw_string(font, Vector2(0, y), text, HORIZONTAL_ALIGNMENT_CENTER, get_viewport_rect().size.x, size, color)
 
 
 ## Each element has its own expression.
@@ -235,71 +382,3 @@ func _draw_face(c: Vector2, r: float, element: int, ink: Color) -> void:
 			draw_line(mouth + Vector2(-r * 0.07, 0), mouth + Vector2(r * 0.07, 0), ink, w)
 
 
-func _draw() -> void:
-	var vp := get_viewport_rect().size
-	draw_rect(Rect2(Vector2.ZERO, vp), BG)
-	var jitter := Vector2(randf_range(-shake, shake), randf_range(-shake, shake)) if shake > 0 else Vector2.ZERO
-	draw_set_transform(jitter)
-
-	var board_rect := Rect2(origin, Vector2(Board.COLS, Board.ROWS) * cell)
-	draw_rect(board_rect.grow(8), PANEL)
-	draw_rect(Rect2(_cell_pos(Board.SPAWN_COL, Board.HIDDEN), Vector2(cell, cell)), Color(COLORS[Element.BLAZE], 0.15))
-
-	for y in range(Board.HIDDEN, Board.H):
-		for x in Board.COLS:
-			var color: int = board.grid[y][x]
-			if color == 0:
-				continue
-			var c := Vector2i(x, y)
-			if state == State.POPPING and popping.has(c):
-				var t := anim_t / POP_TIME
-				var flash := int(anim_t / 0.06) % 2 == 1
-				_draw_blob(_cell_pos(x, y), color - 1, cell, 1 + t * 0.4, 1 - t, Color.WHITE if flash else null)
-			else:
-				var off: float = drops.get(c, 0) * (1 - min(1.0, anim_t / SETTLE_TIME)) if state == State.SETTLING else 0.0
-				_draw_blob(_cell_pos(x, y - off), color - 1, cell)
-
-	if board.has_piece:
-		var g := board.ghost_pos()
-		for pc in board.piece_cells(g):
-			if pc[0].y >= Board.HIDDEN:
-				_draw_blob(_cell_pos(pc[0].x, pc[0].y), pc[1] - 1, cell, 0.45, 0.35)
-		var smooth := minf(1.0, fall_timer / fall_delay) if board.can_fall() else 0.0
-		for pc in board.piece_cells():
-			if pc[0].y + smooth >= Board.HIDDEN:
-				_draw_blob(_cell_pos(pc[0].x, pc[0].y + smooth), pc[1] - 1, cell)
-
-	draw_set_transform(Vector2.ZERO)
-	_draw_hud(vp)
-
-
-func _draw_hud(vp: Vector2) -> void:
-	_label("SCORE", Vector2(24, 60), 22, Color("#a99cc9"))
-	_label(str(score), Vector2(24, 110), 44, Color.WHITE)
-	_label("RECORD", Vector2(vp.x - 200, 60), 22, Color("#a99cc9"))
-	_label(str(best), Vector2(vp.x - 200, 110), 44, Color.WHITE)
-	if not board.queue.is_empty():
-		var nxt: Array = board.queue[0]
-		var s := cell * 0.8
-		var p := Vector2(vp.x / 2 - s / 2, 20)
-		_draw_blob(p, nxt[1] - 1, s)
-		_draw_blob(p + Vector2(0, s), nxt[0] - 1, s)
-	if chain_text_t > 0:
-		var a := minf(1.0, chain_text_t * 3)
-		_label_centered(chain_text, vp.y * 0.4, 72, Color(ACCENT, a))
-	if state == State.MENU or state == State.OVER:
-		draw_rect(Rect2(Vector2.ZERO, vp), Color(BG, 0.9))
-		_label_centered("PokoPoko", vp.y * 0.35, 96, ACCENT)
-		if state == State.OVER:
-			_label_centered("Score : %d" % score, vp.y * 0.45, 40, Color.WHITE)
-		_label_centered("Glisser ↔ déplacer · Toucher tourner · Glisser ↓ chute", vp.y * 0.55, 24, Color("#a99cc9"))
-		_label_centered("Touchez pour %s" % ("rejouer" if state == State.OVER else "jouer"), vp.y * 0.65, 40, Color.WHITE)
-
-
-func _label(text: String, at: Vector2, size: int, color: Color) -> void:
-	draw_string(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
-
-
-func _label_centered(text: String, y: float, size: int, color: Color) -> void:
-	var w := get_viewport_rect().size.x
-	draw_string(font, Vector2(0, y), text, HORIZONTAL_ALIGNMENT_CENTER, w, size, color)
