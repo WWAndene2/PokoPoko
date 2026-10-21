@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#1b1430">
+<title>PokoPoko</title>
+<style>
+  :root { --bg:#1b1430; --panel:#2a2048; --text:#f4eefe; --muted:#a99cc9; --accent:#ffcf5a; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",sans-serif; overflow:hidden; touch-action:none; user-select:none; }
+  #app { height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; padding:12px; }
+  #hud { width:100%; max-width:420px; display:flex; justify-content:space-between; align-items:center; }
+  .stat { background:var(--panel); border-radius:12px; padding:6px 12px; min-width:90px; }
+  .stat small { display:block; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.08em; }
+  .stat b { font-size:20px; font-variant-numeric:tabular-nums; }
+  #next { display:flex; flex-direction:column; align-items:center; }
+  #nextCanvas { background:var(--panel); border-radius:12px; }
+  #board { background:var(--panel); border-radius:16px; box-shadow:0 10px 30px #0006; }
+  #chain { position:fixed; left:50%; top:38%; transform:translate(-50%,-50%) scale(.5); opacity:0;
+    font-size:44px; font-weight:900; color:var(--accent); text-shadow:0 4px 0 #0008; pointer-events:none; transition:all .25s ease-out; }
+  #chain.show { opacity:1; transform:translate(-50%,-50%) scale(1); }
+  #overlay { position:fixed; inset:0; background:#1b1430e6; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; text-align:center; padding:24px; }
+  #overlay.hidden { display:none; }
+  #overlay h1 { font-size:48px; margin:0; color:var(--accent); letter-spacing:.02em; }
+  #overlay p { color:var(--muted); margin:0; max-width:320px; line-height:1.5; }
+  button { font:inherit; font-weight:800; font-size:20px; padding:14px 36px; border:0; border-radius:999px; background:var(--accent); color:#2a2048; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="hud">
+    <div class="stat"><small>Score</small><b id="score">0</b></div>
+    <div id="next"><canvas id="nextCanvas"></canvas></div>
+    <div class="stat"><small>Record</small><b id="best">0</b></div>
+  </div>
+  <canvas id="board"></canvas>
+</div>
+<div id="chain"></div>
+<div id="overlay">
+  <h1>PokoPoko</h1>
+  <p id="msg">Relie 4 bulles de même couleur pour les faire éclater.<br>Enchaîne les réactions pour exploser le score !<br><br>
+    Glisser ↔ : déplacer · Toucher : tourner · Glisser ↓ : chute</p>
+  <button id="play">Jouer</button>
+</div>
+<script>
+"use strict";
+const COLS = 6, ROWS = 12, HIDDEN = 1, H = ROWS + HIDDEN; // row 0 is the hidden spawn row
+const COLORS = ["#ff5a7a", "#4fd1ff", "#7ee36b", "#ffcf5a", "#b98cff"];
+const NUM_COLORS = 4;
+const SPAWN_COL = 2;
+// Satellite offsets by rotation: up, right, down, left
+const ROT = [[0,-1],[1,0],[0,1],[-1,0]];
+
+const board = document.getElementById("board"), ctx = board.getContext("2d");
+const nextCanvas = document.getElementById("nextCanvas"), nctx = nextCanvas.getContext("2d");
+const $score = document.getElementById("score"), $best = document.getElementById("best");
+const $chain = document.getElementById("chain"), $overlay = document.getElementById("overlay");
+const $msg = document.getElementById("msg"), $play = document.getElementById("play");
+
+let cell = 40, grid, piece, queue, score, best = 0, state = "menu", fallTimer, fallDelay, chainCount, popping, popTime, dropAnim, lastT = 0;
+try { best = +localStorage.getItem("pokopoko-best") || 0; } catch {}
+$best.textContent = best;
+
+function resize() {
+  const maxW = Math.min(window.innerWidth - 24, 420), maxH = window.innerHeight - 120;
+  cell = Math.floor(Math.min(maxW / COLS, maxH / ROWS));
+  const dpr = window.devicePixelRatio || 1;
+  for (const [c, w, h] of [[board, COLS * cell, ROWS * cell], [nextCanvas, cell * 2.4, cell * 2.4]]) {
+    c.width = w * dpr; c.height = h * dpr; c.style.width = w + "px"; c.style.height = h + "px";
+    c.getContext("2d").setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+}
+window.addEventListener("resize", resize);
+
+const randPair = () => [1 + Math.floor(Math.random() * NUM_COLORS), 1 + Math.floor(Math.random() * NUM_COLORS)];
+
+function start() {
+  grid = Array.from({ length: H }, () => Array(COLS).fill(0));
+  queue = [randPair(), randPair()];
+  score = 0; fallDelay = 700; $score.textContent = 0;
+  $overlay.classList.add("hidden");
+  spawn();
+}
+
+function spawn() {
+  const [a, b] = queue.shift(); queue.push(randPair());
+  piece = { x: SPAWN_COL, y: 1, rot: 0, a, b }; // a = pivot, b = satellite
+  fallTimer = 0; chainCount = 0; state = "falling";
+  if (grid[HIDDEN][SPAWN_COL]) return gameOver();
+}
+
+const cellsOf = (p) => [[p.x, p.y, p.a], [p.x + ROT[p.rot][0], p.y + ROT[p.rot][1], p.b]];
+const free = (x, y) => x >= 0 && x < COLS && y < H && (y < 0 || !grid[y][x]);
+const fits = (p) => cellsOf(p).every(([x, y]) => free(x, y));
+
+function move(dx) {
+  if (state !== "falling") return;
+  const p = { ...piece, x: piece.x + dx };
+  if (fits(p)) piece = p;
+}
+
+function rotate() {
+  if (state !== "falling") return;
+  const rot = (piece.rot + 1) % 4;
+  // Try in place, then wall kicks, then a vertical kick; finally a 180° flip when boxed in
+  for (const [dx, dy] of [[0,0],[-ROT[rot][0],0],[0,-1]]) {
+    const p = { ...piece, rot, x: piece.x + dx, y: piece.y + dy };
+    if (fits(p)) { piece = p; return; }
+  }
+  const flip = { ...piece, rot: (piece.rot + 2) % 4 };
+  if (fits(flip)) piece = flip;
+  else { const up = { ...flip, y: flip.y - 1 }; if (fits(up)) piece = up; }
+}
+
+function step() {
+  const p = { ...piece, y: piece.y + 1 };
+  if (fits(p)) { piece = p; return true; }
+  lock(); return false;
+}
+
+function hardDrop() {
+  if (state !== "falling") return;
+  while (step()) score += 1;
+  $score.textContent = score;
+}
+
+function lock() {
+  for (const [x, y, c] of cellsOf(piece)) if (y >= 0) grid[y][x] = c;
+  piece = null;
+  resolve();
+}
+
+// Gravity: returns true if anything moved; records fall distances for animation
+function applyGravity() {
+  let moved = false; dropAnim = [];
+  for (let x = 0; x < COLS; x++) {
+    let write = H - 1;
+    for (let y = H - 1; y >= 0; y--) {
+      if (!grid[y][x]) continue;
+      if (y !== write) { grid[write][x] = grid[y][x]; grid[y][x] = 0; dropAnim.push([x, write, write - y]); moved = true; }
+      write--;
+    }
+  }
+  return moved;
+}
+
+function findGroups() {
+  const seen = grid.map((r) => r.map(() => false)), groups = [];
+  for (let y = HIDDEN; y < H; y++) for (let x = 0; x < COLS; x++) {
+    const c = grid[y][x];
+    if (!c || seen[y][x]) continue;
+    const stack = [[x, y]], g = []; seen[y][x] = true;
+    while (stack.length) {
+      const [cx, cy] = stack.pop(); g.push([cx, cy]);
+      for (const [dx, dy] of ROT) {
+        const nx = cx + dx, ny = cy + dy;
+        if (nx >= 0 && nx < COLS && ny >= HIDDEN && ny < H && !seen[ny][nx] && grid[ny][nx] === c) { seen[ny][nx] = true; stack.push([nx, ny]); }
+      }
+    }
+    if (g.length >= 4) groups.push({ c, cells: g });
+  }
+  return groups;
+}
+
+const CHAIN_POWER = [0, 8, 16, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320];
+const COLOR_BONUS = [0, 0, 3, 6, 12, 24];
+const groupBonus = (n) => (n <= 4 ? 0 : n >= 11 ? 10 : n - 3);
+
+function resolve() {
+  state = "settling"; popTime = 0;
+  applyGravity();
+}
+
+function checkPops() {
+  const groups = findGroups();
+  if (!groups.length) {
+    if (chainCount >= 2) flashChain(chainCount);
+    fallDelay = Math.max(180, fallDelay - 4);
+    return spawn();
+  }
+  chainCount++;
+  const n = groups.reduce((s, g) => s + g.cells.length, 0);
+  const colors = new Set(groups.map((g) => g.c)).size;
+  const bonus = (CHAIN_POWER[chainCount - 1] ?? 320) + COLOR_BONUS[colors] + groups.reduce((s, g) => s + groupBonus(g.cells.length), 0);
+  score += 10 * n * Math.max(1, Math.min(999, bonus));
+  $score.textContent = score;
+  if (chainCount >= 2) flashChain(chainCount);
+  popping = groups.flatMap((g) => g.cells);
+  sound(chainCount);
+  buzz(chainCount);
+  state = "popping"; popTime = 0;
+}
+
+function flashChain(n) {
+  $chain.textContent = n + " chaîne" + (n > 1 ? "s" : "") + " !";
+  $chain.classList.add("show");
+  clearTimeout(flashChain.t); flashChain.t = setTimeout(() => $chain.classList.remove("show"), 700);
+}
+
+function gameOver() {
+  state = "over"; piece = null;
+  if (score > best) { best = score; try { localStorage.setItem("pokopoko-best", best); } catch {} $best.textContent = best; }
+  $msg.innerHTML = `Score : <b>${score}</b><br>Record : ${best}`;
+  $play.textContent = "Rejouer";
+  $overlay.classList.remove("hidden");
+}
+
+// --- Audio & haptics -------------------------------------------------------
+let actx;
+function sound(chain) {
+  try {
+    actx ??= new (window.AudioContext || window.webkitAudioContext)();
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = "triangle"; o.frequency.value = 330 * Math.pow(2, (chain - 1) / 4);
+    g.gain.setValueAtTime(0.25, actx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.3);
+    o.connect(g).connect(actx.destination); o.start(); o.stop(actx.currentTime + 0.3);
+  } catch {}
+}
+const buzz = (chain) => navigator.vibrate?.(Math.min(30 + chain * 20, 150));
+
+// --- Rendering --------------------------------------------------------------
+function drawBlob(c, x, y, color, scale = 1, alpha = 1) {
+  const r = (cell / 2 - 2) * scale, cx = x + cell / 2, cy = y + cell / 2;
+  c.globalAlpha = alpha;
+  c.fillStyle = color; c.beginPath(); c.arc(cx, cy, r, 0, Math.PI * 2); c.fill();
+  c.fillStyle = "#ffffff55"; c.beginPath(); c.arc(cx - r * .35, cy - r * .35, r * .3, 0, Math.PI * 2); c.fill();
+  c.fillStyle = "#1b1430"; // eyes
+  c.beginPath(); c.arc(cx - r * .3, cy + r * .05, r * .12, 0, Math.PI * 2); c.arc(cx + r * .3, cy + r * .05, r * .12, 0, Math.PI * 2); c.fill();
+  c.globalAlpha = 1;
+}
+
+function render() {
+  ctx.clearRect(0, 0, COLS * cell, ROWS * cell);
+  ctx.strokeStyle = "#ffffff0d";
+  for (let x = 1; x < COLS; x++) { ctx.beginPath(); ctx.moveTo(x * cell, 0); ctx.lineTo(x * cell, ROWS * cell); ctx.stroke(); }
+  // Danger marker on the spawn column
+  ctx.fillStyle = "#ff5a7a22"; ctx.fillRect(SPAWN_COL * cell, 0, cell, cell);
+  if (!grid) return;
+  const fallT = state === "settling" ? Math.min(1, popTime / 120) : 1;
+  const offsets = new Map((dropAnim || []).map(([x, y, d]) => [x + "," + y, d]));
+  const popSet = state === "popping" ? new Set(popping.map(([x, y]) => x + "," + y)) : null;
+  for (let y = HIDDEN; y < H; y++) for (let x = 0; x < COLS; x++) {
+    const c = grid[y][x]; if (!c) continue;
+    const off = state === "settling" ? (offsets.get(x + "," + y) || 0) * (1 - fallT) : 0;
+    const k = x + "," + y;
+    if (popSet?.has(k)) {
+      const t = popTime / 350, flash = Math.floor(popTime / 60) % 2;
+      drawBlob(ctx, x * cell, (y - HIDDEN) * cell, flash ? "#ffffff" : COLORS[c - 1], 1 + t * .4, 1 - t);
+    } else drawBlob(ctx, x * cell, (y - HIDDEN - off) * cell, COLORS[c - 1]);
+  }
+  if (piece) {
+    // Ghost preview of the landing spot
+    let g = { ...piece }; while (fits({ ...g, y: g.y + 1 })) g.y++;
+    for (const [x, y, c] of cellsOf(g)) if (y >= HIDDEN) drawBlob(ctx, x * cell, (y - HIDDEN) * cell, COLORS[c - 1], .45, .35);
+    const smooth = Math.min(1, fallTimer / fallDelay) * (fits({ ...piece, y: piece.y + 1 }) ? 1 : 0);
+    for (const [x, y, c] of cellsOf(piece)) if (y + smooth >= HIDDEN) drawBlob(ctx, x * cell, (y - HIDDEN + smooth) * cell, COLORS[c - 1]);
+  }
+  nctx.clearRect(0, 0, nextCanvas.width, nextCanvas.height);
+  if (queue) { const [a, b] = queue[0]; drawBlob(nctx, cell * .7, cell * .2, COLORS[b - 1]); drawBlob(nctx, cell * .7, cell * 1.2, COLORS[a - 1]); }
+}
+
+function loop(t) {
+  const dt = Math.min(50, t - lastT); lastT = t;
+  if (state === "falling") {
+    fallTimer += dt;
+    if (fallTimer >= fallDelay) { fallTimer = 0; step(); }
+  } else if (state === "settling") {
+    popTime += dt;
+    if (popTime >= 120) checkPops();
+  } else if (state === "popping") {
+    popTime += dt;
+    if (popTime >= 350) {
+      for (const [x, y] of popping) grid[y][x] = 0;
+      popping = null; resolve();
+    }
+  }
+  render();
+  requestAnimationFrame(loop);
+}
+
+// --- Input -----------------------------------------------------------------
+document.addEventListener("keydown", (e) => {
+  if (state === "menu" || state === "over") { if (e.key === "Enter" || e.key === " ") start(); return; }
+  if (e.key === "ArrowLeft") move(-1);
+  else if (e.key === "ArrowRight") move(1);
+  else if (e.key === "ArrowUp" || e.key === "x") rotate();
+  else if (e.key === "ArrowDown") { if (state === "falling") { fallTimer = 0; step(); } }
+  else if (e.key === " ") hardDrop();
+  else return;
+  e.preventDefault();
+});
+
+let touch = null;
+board.addEventListener("pointerdown", (e) => { touch = { x0: e.clientX, y0: e.clientY, lastX: e.clientX, moved: false, t: performance.now() }; });
+board.addEventListener("pointermove", (e) => {
+  if (!touch) return;
+  const step = cell * 0.8;
+  while (e.clientX - touch.lastX > step) { move(1); touch.lastX += step; touch.moved = true; }
+  while (touch.lastX - e.clientX > step) { move(-1); touch.lastX -= step; touch.moved = true; }
+});
+board.addEventListener("pointerup", (e) => {
+  if (!touch) return;
+  const dy = e.clientY - touch.y0, dx = e.clientX - touch.x0;
+  if (dy > cell * 1.5 && dy > Math.abs(dx)) hardDrop();
+  else if (!touch.moved && Math.abs(dx) < 10 && Math.abs(dy) < 10) rotate();
+  touch = null;
+});
+$play.addEventListener("click", start);
+
+resize();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
