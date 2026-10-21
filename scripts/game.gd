@@ -57,6 +57,13 @@ var chain_text_t := [0.0, 0.0]
 const CHAIN_TEXT_TIME := 1.0
 var shake := 0.0
 
+# Visual-only physics: particles, attack orbs and the smoothed falling pair
+const PARTICLE_GRAVITY := 1400.0
+const ORB_TIME := 0.45
+var particles: Array = [] # {pos, vel, color, life, max, size}
+var orbs: Array = [] # {from, to, t, color, size, target}
+var piece_vis := [{"id": -1}, {"id": -1}] # per player: {id, x, ang}
+
 # Touch tracking
 var touch_start := Vector2.ZERO
 var touch_start_t := 0
@@ -94,6 +101,9 @@ func _start_round() -> void:
 		players.append(cpu)
 		ai = AI.new(cpu, ai_level)
 	elapsed = 0.0
+	particles.clear()
+	orbs.clear()
+	piece_vis = [{"id": -1}, {"id": -1}]
 	chain_text = ["", ""]
 	chain_text_t = [0.0, 0.0]
 	screen = Screen.PLAYING
@@ -129,6 +139,8 @@ func _process(delta: float) -> void:
 		for i in players.size():
 			players[i].update(delta)
 			_handle_events(i)
+	_update_piece_vis(delta)
+	_update_fx(delta)
 	for i in 2:
 		chain_text_t[i] = maxf(0.0, chain_text_t[i] - delta)
 	shake = maxf(0.0, shake - delta * 60.0)
@@ -140,6 +152,7 @@ func _handle_events(i: int) -> void:
 	for e in p.events:
 		match e[0]:
 			"chain":
+				_on_pop(i)
 				if e[1] >= 2:
 					chain_text[i] = "%d chaînes !" % e[1]
 					chain_text_t[i] = CHAIN_TEXT_TIME
@@ -151,6 +164,9 @@ func _handle_events(i: int) -> void:
 				chain_text_t[i] = CHAIN_TEXT_TIME * 1.3
 			"attack":
 				players[1 - i].pending_garbage += e[1]
+			"garbage":
+				if i == 0 and e[1] >= 6:
+					shake = minf(3.0 + e[1] * 0.4, 14.0)
 			"dead":
 				if screen == Screen.PLAYING:
 					_end(i != 0 and players.size() == 2)
@@ -265,6 +281,7 @@ func _draw() -> void:
 		return
 	for i in players.size():
 		_draw_player(i)
+	_draw_fx()
 	_draw_top_bar(vp)
 	_draw_bottom_bar(vp)
 	if screen == Screen.RESULT:
@@ -410,7 +427,6 @@ func _draw_player(i: int) -> void:
 		draw_line(xc - Vector2(xr, xr), xc + Vector2(xr, xr), Color("#ff3b3b", 0.8), cell * 0.16)
 		draw_line(xc + Vector2(-xr, xr), xc + Vector2(xr, -xr), Color("#ff3b3b", 0.8), cell * 0.16)
 
-	var t := p.fall_progress()
 	var animating := p.state == Player.State.SETTLING or p.state == Player.State.GARBAGE
 	var still := func(c: Vector2i) -> bool:
 		return not (animating and p.drops.has(c)) and not (p.state == Player.State.POPPING and p.popping.has(c))
@@ -435,22 +451,34 @@ func _draw_player(i: int) -> void:
 				continue
 			var c := Vector2i(x, y)
 			if p.state == Player.State.POPPING and p.popping.has(c):
+				# Swell and flash, then burst (particles spawn in _on_pop)
 				var pt := p.anim_t / Player.POP_TIME
 				var flash := int(p.anim_t / 0.06) % 2 == 1
-				_draw_blob(at.call(x, y), color, cell, 1 + pt * 0.4, 1 - pt, Color.WHITE if flash else null)
+				var wobble := 1.0 + 0.12 * sin(p.anim_t * 40.0)
+				_draw_blob(at.call(x, y), color, cell, 1 + pt * 0.35, 1 - pt * pt, Color.WHITE if flash else null, Vector2(wobble, 2.0 - wobble))
 			else:
-				var off: float = p.drops.get(c, 0) * (1 - t) if animating else 0.0
-				_draw_blob(at.call(x, y - off), color, cell)
+				var off := p.fall_offset(c)
+				if off > 0:
+					# Stretched while falling
+					_draw_blob(at.call(x, y - off), color, cell, 1.0, 1.0, null, Vector2(0.9, 1.12))
+				else:
+					var idle := _idle(color, x, y)
+					_draw_blob(at.call(x, y) + idle.offset * cell, color, cell, 1.0, 1.0, null, _land_squash(p, c) * idle.squash, idle.tilt, idle.blink)
 
 	if b.has_piece and p.state == Player.State.FALLING:
 		var g := b.ghost_pos()
 		for pc in b.piece_cells(g):
 			if pc[0].y >= Board.HIDDEN:
 				_draw_blob(at.call(pc[0].x, pc[0].y), pc[1], cell, 0.45, 0.35)
+		# Smoothed pair: slides between columns and swings around the pivot when turning
 		var smooth := minf(1.0, p.fall_timer / p.fall_delay) if b.can_fall() else 0.0
-		for pc in b.piece_cells():
-			if pc[0].y + smooth >= Board.HIDDEN:
-				_draw_blob(at.call(pc[0].x, pc[0].y + smooth), pc[1], cell)
+		var vis: Dictionary = piece_vis[i]
+		var pivot := Vector2(vis.get("x", b.pos.x), b.pos.y + smooth)
+		var sat := pivot + Vector2.from_angle(vis.get("ang", -PI / 2))
+		var ground := 1.0 - 0.06 * sin(p.time * 18.0) if not b.can_fall() else 1.0 # quiver during the grace period
+		for part in [[pivot, b.a], [sat, b.b]]:
+			if part[0].y >= Board.HIDDEN - 0.5:
+				_draw_blob(at.call(part[0].x, part[0].y), part[1], cell, 1.0, 1.0, null, Vector2(2.0 - ground, ground))
 
 	_draw_next(i, cell)
 
@@ -520,9 +548,12 @@ func _draw_pending(n: int, at: Vector2, cell: float) -> void:
 
 
 ## `kind` is a board value: 1..5 element, Board.GARBAGE for nuisance.
-func _draw_blob(at: Vector2, kind: int, size: float, scale: float = 1.0, alpha: float = 1.0, tint: Variant = null) -> void:
+## `squash` scales around the Poko's bottom (x = width, y = height), `tilt` rotates it.
+func _draw_blob(at: Vector2, kind: int, size: float, scale: float = 1.0, alpha: float = 1.0, tint: Variant = null,
+		squash := Vector2.ONE, tilt := 0.0, blink := false) -> void:
 	var r := (size / 2 - 2) * scale
-	var c := at + Vector2(size, size) / 2
+	draw_set_transform(at + Vector2(size / 2, size / 2 + r), tilt, squash)
+	var c := Vector2(0, -r)
 	var base: Color = GARBAGE_COLOR if kind == Board.GARBAGE else COLORS[kind - 1]
 	var fill: Color = tint if tint != null else base
 	draw_circle(c + Vector2(0, r * 0.08), r, Color(base.darkened(0.35), alpha)) # bottom shade
@@ -534,19 +565,24 @@ func _draw_blob(at: Vector2, kind: int, size: float, scale: float = 1.0, alpha: 
 			draw_circle(c + Vector2(sx * r * 0.32, 0), r * 0.24, Color(INK, alpha * 0.7))
 			draw_circle(c + Vector2(sx * r * 0.32, 0), r * 0.14, Color(1, 1, 1, alpha))
 	else:
-		_draw_face(c, r, kind - 1, Color(INK, alpha))
+		_draw_face(c, r, kind - 1, Color(INK, alpha), blink)
+	draw_set_transform(Vector2.ZERO)
 
 
 ## Each element has its own expression.
-func _draw_face(c: Vector2, r: float, element: int, ink: Color) -> void:
+func _draw_face(c: Vector2, r: float, element: int, ink: Color, blink := false) -> void:
 	var w := maxf(1.5, r * 0.09)
 	var le := c + Vector2(-r * 0.3, 0)
 	var re := c + Vector2(r * 0.3, 0)
 	var mouth := c + Vector2(0, r * 0.35)
 	match element:
 		Element.AQUA: # confident and brave: round eyes, determined brows, firm smile
-			draw_circle(le, r * 0.12, ink)
-			draw_circle(re, r * 0.12, ink)
+			if blink:
+				draw_line(le - Vector2(r * 0.12, 0), le + Vector2(r * 0.12, 0), ink, w)
+				draw_line(re - Vector2(r * 0.12, 0), re + Vector2(r * 0.12, 0), ink, w)
+			else:
+				draw_circle(le, r * 0.12, ink)
+				draw_circle(re, r * 0.12, ink)
 			draw_line(le + Vector2(-r * 0.15, -r * 0.28), le + Vector2(r * 0.12, -r * 0.2), ink, w)
 			draw_line(re + Vector2(r * 0.15, -r * 0.28), re + Vector2(-r * 0.12, -r * 0.2), ink, w)
 			draw_arc(mouth + Vector2(0, -r * 0.12), r * 0.18, PI * 0.2, PI * 0.8, 8, ink, w)
@@ -569,8 +605,138 @@ func _draw_face(c: Vector2, r: float, element: int, ink: Color) -> void:
 		Element.NOVA: # apathetic and mysterious (kuudere): flat half-closed eyes, no smile
 			draw_line(le + Vector2(-r * 0.13, 0), le + Vector2(r * 0.13, 0), ink, w)
 			draw_line(re + Vector2(-r * 0.13, 0), re + Vector2(r * 0.13, 0), ink, w)
-			draw_circle(le + Vector2(0, r * 0.05), r * 0.06, ink)
-			draw_circle(re + Vector2(0, r * 0.05), r * 0.06, ink)
+			if not blink:
+				draw_circle(le + Vector2(0, r * 0.05), r * 0.06, ink)
+				draw_circle(re + Vector2(0, r * 0.05), r * 0.06, ink)
 			draw_line(mouth + Vector2(-r * 0.07, 0), mouth + Vector2(r * 0.07, 0), ink, w)
 
 
+
+
+# --- Animation and effects ---------------------------------------------------
+
+## Damped spring after landing: squashed flat at impact, then wobbles back to round.
+func _land_squash(p: Player, c: Vector2i) -> Vector2:
+	if not p.land.has(c):
+		return Vector2.ONE
+	var dt: float = p.time - p.land[c][0]
+	if dt < 0.0 or dt > 0.8:
+		return Vector2.ONE
+	var k: float = 0.22 * p.land[c][1] * exp(-6.5 * dt) * cos(21.0 * dt)
+	return Vector2(1.0 + k, 1.0 - k)
+
+
+## Idle "emotion" motion for a settled Poko. Offset is in cells.
+func _idle(kind: int, x: int, y: int) -> Dictionary:
+	var res := {"offset": Vector2.ZERO, "squash": Vector2.ONE, "tilt": 0.0, "blink": false}
+	var ph := float(x * 7 + y * 13) * 0.37
+	var t := clock
+	match kind - 1:
+		Element.AQUA: # confident: deep, steady breathing; blinks now and then
+			var s := 0.03 * sin(t * 2.2 + ph)
+			res.squash = Vector2(1 + s, 1 + s)
+			res.blink = fmod(t + ph * 3.0, 5.0) < 0.12
+		Element.BLAZE: # aggressive: restless trembling
+			res.offset = Vector2(sin(t * 38.0 + ph) * 0.012, 0)
+			var flare := fmod(t + ph, 3.0)
+			if flare < 0.3:
+				var k := sin(flare / 0.3 * PI) * 0.08
+				res.squash = Vector2(1 - k, 1 + k)
+		Element.LEAF: # calm: gentle sway
+			res.tilt = sin(t * 1.2 + ph) * 0.07
+		Element.SUNNY: # joyful: little hops
+			var u := fmod(t * 0.8 + ph, 2.0)
+			if u < 0.4:
+				var h := sin(u / 0.4 * PI)
+				res.offset = Vector2(0, -h * 0.1)
+				res.squash = Vector2(1 - h * 0.06, 1 + h * 0.06)
+		Element.NOVA: # mysterious: slow floating, long blinks
+			res.offset = Vector2(0, sin(t * 1.0 + ph) * 0.03)
+			res.blink = fmod(t + ph * 2.0, 4.0) < 0.3
+	return res
+
+
+func _update_piece_vis(delta: float) -> void:
+	for i in players.size():
+		var b := players[i].board
+		if not b.has_piece:
+			continue
+		var target_ang := -PI / 2 + b.rot * PI / 2
+		var vis: Dictionary = piece_vis[i]
+		if vis.id != players[i].piece_id:
+			piece_vis[i] = {"id": players[i].piece_id, "x": float(b.pos.x), "ang": target_ang}
+			continue
+		var k := minf(1.0, delta * 22.0)
+		vis.x = lerpf(vis.x, b.pos.x, k)
+		vis.ang = lerp_angle(vis.ang, target_ang, minf(1.0, delta * 26.0))
+
+
+func _cell_center(i: int, c: Vector2i) -> Vector2:
+	return _origin(i) + (Vector2(c) + Vector2(0.5, 0.5 - Board.HIDDEN)) * _cell()
+
+
+## A group starts popping: splash droplets, and in versus an attack orb flies off.
+func _on_pop(i: int) -> void:
+	var p := players[i]
+	var cell := _cell()
+	var centroid := Vector2.ZERO
+	var count := 0
+	var orb_color := Color.WHITE
+	for c in p.popping:
+		var kind: int = p.board.grid[c.y][c.x]
+		var col: Color = GARBAGE_COLOR if kind == Board.GARBAGE else COLORS[kind - 1]
+		var pos := _cell_center(i, c)
+		if kind != Board.GARBAGE:
+			centroid += pos
+			count += 1
+			orb_color = col
+		for k in 7:
+			var ang := randf_range(-PI * 0.95, -PI * 0.05)
+			particles.append({"pos": pos, "vel": Vector2.from_angle(ang) * randf_range(180, 520) * cell / 50.0,
+				"color": col, "life": 0.0, "max": randf_range(0.35, 0.7), "size": randf_range(0.08, 0.16) * cell})
+	if count == 0 or not _versus():
+		return
+	centroid /= count
+	# Sending if the chain produced attack, otherwise it is cancelling our own garbage
+	var target := 1 - i if p.attack > 0 else i
+	var to := _origin(target) + Vector2(_board_size().x / 2, -cell * 0.45 - 4)
+	orbs.append({"from": centroid, "to": to, "t": 0.0, "color": orb_color, "size": cell * 0.35, "target": target})
+
+
+func _update_fx(delta: float) -> void:
+	for pt in particles:
+		pt.vel.y += PARTICLE_GRAVITY * delta
+		pt.pos += pt.vel * delta
+		pt.life += delta
+	particles = particles.filter(func(pt): return pt.life < pt.max)
+	for o in orbs:
+		o.t += delta / ORB_TIME
+		if o.t >= 1.0:
+			for k in 12:
+				particles.append({"pos": o.to, "vel": Vector2.from_angle(randf() * TAU) * randf_range(120, 360),
+					"color": o.color.lightened(0.3), "life": 0.0, "max": 0.4, "size": o.size * 0.3})
+			if o.target == 0:
+				shake = maxf(shake, 5.0)
+	orbs = orbs.filter(func(o): return o.t < 1.0)
+
+
+func _orb_pos(o: Dictionary, t: float) -> Vector2:
+	# Quadratic Bezier arcing upward between the boards
+	var mid: Vector2 = (o.from + o.to) / 2 + Vector2(0, -220)
+	var e := ease(clampf(t, 0, 1), 0.6)
+	return o.from.lerp(mid, e).lerp(mid.lerp(o.to, e), e)
+
+
+func _draw_fx() -> void:
+	for pt in particles:
+		var k: float = 1.0 - pt.life / pt.max
+		draw_circle(pt.pos, pt.size * (0.4 + 0.6 * k), Color(pt.color, k))
+	for o in orbs:
+		for s in range(6, 0, -1):
+			var tp: float = o.t - s * 0.035
+			if tp > 0:
+				draw_circle(_orb_pos(o, tp), o.size * (1.0 - s * 0.13), Color(o.color, 0.5 - s * 0.07))
+		var head := _orb_pos(o, o.t)
+		draw_circle(head, o.size * 1.5, Color(o.color, 0.25))
+		draw_circle(head, o.size, o.color.lightened(0.2))
+		draw_circle(head, o.size * 0.5, Color(1, 1, 1, 0.9))

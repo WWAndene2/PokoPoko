@@ -5,9 +5,9 @@ extends RefCounted
 
 enum State { IDLE, FALLING, SETTLING, POPPING, GARBAGE, DEAD }
 
-const SETTLE_TIME := 0.12
+const GRAVITY := 80.0 # cells / s², drives how long falls take (visual + timing)
+const MIN_SETTLE_TIME := 0.08
 const POP_TIME := 0.35
-const GARBAGE_TIME := 0.3
 const LOCK_DELAY := 0.5
 const MAX_LOCK_RESETS := 8
 const SOFT_DROP_SPEED := 12.0
@@ -25,8 +25,11 @@ var fall_delay := START_FALL_DELAY
 var lock_timer := 0.0
 var lock_resets := 0
 var soft_drop := false
+var time := 0.0 # local clock, used for fall and landing animations
 var anim_t := 0.0
+var settle_time := 0.0 # duration of the current fall, from the longest drop
 var drops := {} # Vector2i -> fall distance (for the settle / garbage animation)
+var land := {} # Vector2i -> [land time, strength] for squash-and-bounce on landing
 var popping: Array = []
 var chain := 0
 var piece_id := 0
@@ -66,6 +69,7 @@ func _spawn() -> void:
 
 
 func update(delta: float) -> void:
+	time += delta
 	match state:
 		State.FALLING:
 			if board.can_fall():
@@ -83,28 +87,46 @@ func update(delta: float) -> void:
 					_lock()
 		State.SETTLING:
 			anim_t += delta
-			if anim_t >= SETTLE_TIME:
+			if anim_t >= settle_time:
 				_check_pops()
 		State.POPPING:
 			anim_t += delta
 			if anim_t >= POP_TIME:
 				board.clear_cells(popping)
+				for c in popping:
+					land.erase(c)
 				popping = []
 				_settle()
 		State.GARBAGE:
 			anim_t += delta
-			if anim_t >= GARBAGE_TIME:
+			if anim_t >= settle_time:
 				_spawn()
 
 
-## 0..1 progress of the current fall animation.
-func fall_progress() -> float:
-	match state:
-		State.SETTLING:
-			return minf(1.0, anim_t / SETTLE_TIME)
-		State.GARBAGE:
-			return minf(1.0, anim_t / GARBAGE_TIME)
-	return 1.0
+## How many cells above its grid cell `c` is drawn right now (free fall under GRAVITY).
+func fall_offset(c: Vector2i) -> float:
+	if (state != State.SETTLING and state != State.GARBAGE) or not land.has(c) or not drops.has(c):
+		return 0.0
+	var remaining: float = land[c][0] - time
+	return 0.5 * GRAVITY * remaining * remaining if remaining > 0 else 0.0
+
+
+## Starts the fall animation for `new_drops` and records when each Poko lands.
+func _start_fall(new_drops: Array, strength: float) -> void:
+	drops.clear()
+	var longest := 0.0
+	for d in new_drops:
+		var c: Vector2i = d[0]
+		var t := sqrt(2.0 * d[1] / GRAVITY)
+		drops[c] = d[1]
+		land[c] = [time + t, strength]
+		longest = maxf(longest, t)
+		# The Poko it lands on gets a small jiggle too
+		var below := c + Vector2i.DOWN
+		if below.y < Board.H and board.grid[below.y][below.x] != 0 and not drops.has(below):
+			land[below] = [time + t, strength * 0.35]
+	anim_t = 0.0
+	settle_time = maxf(MIN_SETTLE_TIME, longest + 0.04)
 
 
 func move(dx: int) -> void:
@@ -128,19 +150,18 @@ func hard_drop() -> void:
 		return
 	while board.step_down():
 		score += 2
-	_lock()
+	_lock(1.2)
 
 
-func _lock() -> void:
+func _lock(strength: float = 0.8) -> void:
+	for pc in board.piece_cells():
+		land[pc[0]] = [time, strength]
 	board.lock()
 	_settle()
 
 
 func _settle() -> void:
-	drops.clear()
-	for d in board.apply_gravity():
-		drops[d[0]] = d[1]
-	anim_t = 0.0
+	_start_fall(board.apply_gravity(), 0.8)
 	state = State.SETTLING
 
 
@@ -188,10 +209,7 @@ func _end_chain() -> void:
 	if pending_garbage > 0:
 		var n := mini(pending_garbage, MAX_GARBAGE_DROP)
 		pending_garbage -= n
-		drops.clear()
-		for d in board.drop_garbage(n):
-			drops[d[0]] = d[1]
-		anim_t = 0.0
+		_start_fall(board.drop_garbage(n), 1.0)
 		state = State.GARBAGE
 		events.append(["garbage", n])
 		return
