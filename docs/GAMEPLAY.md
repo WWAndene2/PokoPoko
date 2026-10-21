@@ -32,8 +32,9 @@
 - Une **ombre** montre où la paire va atterrir.
 
 ### 2.3 Couleurs
-- **4 couleurs** en mode normal (rose, bleu, vert, jaune).
-- **5 couleurs** en mode difficile (+ violet) 💡.
+- Chaque couleur est un **élément** avec sa propre personnalité (voir section 10).
+- **4 éléments** en mode normal : Aqua, Blaze, Leaf, Sunny ✅.
+- **5 éléments** en mode difficile (+ Nova) 💡.
 - Le tirage est fait par un générateur à **graine** (seed) : en multijoueur, les deux joueurs reçoivent **exactement la même suite de paires** (équité) 🔜.
 
 ### 2.4 Contrôles
@@ -293,3 +294,47 @@ Une règle mise en avant chaque semaine en Versus amical :
 4. **Fièvre** (5.3) puis **Méga** (9.6).
 5. **Fêtes** (9.7), **eSport** (9.9) avec le versus en ligne.
 6. **Donjon** (9.11), puis **Mash-up** (9.8) en dernier.
+
+---
+
+## 10. Les Pokos et les Compagnons
+
+### 10.1 Les 5 Pokos ✅
+Chaque couleur de Poko est un **élément** avec une **émotion**, visible sur son visage.
+
+| Poko | Couleur | Élément | Personnalité | Visage |
+|---|---|---|---|---|
+| **Aqua** | Bleu | Eau | Confiant et courageux | Yeux ronds décidés, sourcils froncés, sourire assuré |
+| **Blaze** | Rouge | Feu | Agressif et arrogant | Yeux mi-clos en biais, sourire en coin |
+| **Leaf** | Vert | Plante | Calme et doux | Yeux fermés détendus, petit sourire |
+| **Sunny** | Jaune | Lumière | Joyeux et enjoué | Yeux en « ^ ^ », grand sourire ouvert |
+| **Nova** | Violet | Ombre | Apathique et mystérieux (*kuudere*) | Yeux plats à demi fermés, bouche neutre |
+
+- Nova n'apparaît qu'en mode **5 éléments** : il est le plus rare, ce qui colle à son côté mystérieux.
+- 🔜 Animations par émotion : Blaze tremble d'impatience, Leaf se balance doucement, Sunny sautille en tombant, Aqua bombe le torse à la pose, Nova cligne lentement des yeux.
+- 🔜 Son d'éclatement propre à chaque élément (goutte, crépitement, froissement, tintement, souffle grave).
+
+### 10.2 Les 5 Compagnons 💡
+
+| Compagnon | Élément d'origine | Thème |
+|---|---|---|
+| **Mizuki** | Aqua (eau) | Confiance, courage |
+| **Homura** | Blaze (feu) | Agressivité, arrogance |
+| **Kaede** | Leaf (plante) | Calme, douceur |
+| **Hikari** | Sunny (lumière) | Joie, bonne humeur |
+| **Kuroha** | Nova (ombre) | Apathie, mystère (*kuudere*) |
+
+### 10.3 Compagnons et Pokos sont indépendants
+- Un Compagnon **n'est pas lié** aux Pokos de son élément : **n'importe quel Compagnon** joue avec **tous les Pokos** de la partie.
+- Son élément d'origine définit seulement sa **personnalité**, son **apparence** et l'**ambiance** de sa Signature (9.4) et de sa série de Formes (9.5).
+- Exemples de Signatures (à équilibrer) :
+
+| Compagnon | Signature (idée) | Formes (idée) |
+|---|---|---|
+| Mizuki | Courage : sa 1ʳᵉ contre-attaque de la partie annule +6 grumeaux | Paires et trios équilibrés |
+| Homura | Arrogance : +1 maillon de puissance sur ses chaînes de 5+, mais ses grumeaux en attente tombent 1 pose plus tôt | Beaucoup de carrés (rapide, risqué) |
+| Kaede | Calme : temps de grâce allongé (0,8 s au lieu de 0,5 s) | Presque que des paires (facile) |
+| Hikari | Joie : la grille vide donne +50 % de bonus | Paires et gros Pokos |
+| Kuroha | Mystère : l'adversaire voit ses paires suivantes en silhouette seulement | Formes imprévisibles |
+
+- En **Classique / classé** : les Compagnons ne sont que **cosmétiques** (portrait, voix, réactions), aucune Signature ni Forme.

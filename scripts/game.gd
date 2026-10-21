@@ -3,7 +3,9 @@ extends Node2D
 
 enum State { MENU, FALLING, SETTLING, POPPING, OVER }
 
-const COLORS := [Color("#ff5a7a"), Color("#4fd1ff"), Color("#7ee36b"), Color("#ffcf5a"), Color("#b98cff")]
+# Poko elements, indexed by board color - 1
+enum Element { AQUA, BLAZE, LEAF, SUNNY, NOVA }
+const COLORS := [Color("#4fb8ff"), Color("#ff5a4f"), Color("#7ee36b"), Color("#ffd84f"), Color("#9b6bff")]
 const BG := Color("#1b1430")
 const PANEL := Color("#2a2048")
 const ACCENT := Color("#ffcf5a")
@@ -188,14 +190,49 @@ func _cell_pos(x: float, y: float) -> Vector2:
 	return origin + Vector2(x, y - Board.HIDDEN) * cell
 
 
-func _draw_blob(at: Vector2, color: Color, size: float, scale: float = 1.0, alpha: float = 1.0) -> void:
+func _draw_blob(at: Vector2, element: int, size: float, scale: float = 1.0, alpha: float = 1.0, tint: Variant = null) -> void:
 	var r := (size / 2 - 3) * scale
 	var c := at + Vector2(size, size) / 2
-	draw_circle(c, r, Color(color, alpha))
+	draw_circle(c, r, Color(tint if tint != null else COLORS[element], alpha))
 	draw_circle(c - Vector2(r, r) * 0.35, r * 0.3, Color(1, 1, 1, 0.35 * alpha))
-	var eye := Color(BG, alpha)
-	draw_circle(c + Vector2(-r * 0.3, r * 0.05), r * 0.12, eye)
-	draw_circle(c + Vector2(r * 0.3, r * 0.05), r * 0.12, eye)
+	_draw_face(c, r, element, Color(BG, alpha))
+
+
+## Each element has its own expression.
+func _draw_face(c: Vector2, r: float, element: int, ink: Color) -> void:
+	var w := maxf(1.5, r * 0.09)
+	var le := c + Vector2(-r * 0.3, 0)
+	var re := c + Vector2(r * 0.3, 0)
+	var mouth := c + Vector2(0, r * 0.35)
+	match element:
+		Element.AQUA: # confident and brave: round eyes, determined brows, firm smile
+			draw_circle(le, r * 0.12, ink)
+			draw_circle(re, r * 0.12, ink)
+			draw_line(le + Vector2(-r * 0.15, -r * 0.28), le + Vector2(r * 0.12, -r * 0.2), ink, w)
+			draw_line(re + Vector2(r * 0.15, -r * 0.28), re + Vector2(-r * 0.12, -r * 0.2), ink, w)
+			draw_arc(mouth + Vector2(0, -r * 0.12), r * 0.18, PI * 0.2, PI * 0.8, 8, ink, w)
+		Element.BLAZE: # aggressive and smug: half-lidded eyes, lopsided smirk
+			draw_line(le + Vector2(-r * 0.14, -r * 0.05), le + Vector2(r * 0.14, r * 0.02), ink, w * 1.6)
+			draw_line(re + Vector2(-r * 0.14, r * 0.02), re + Vector2(r * 0.14, -r * 0.05), ink, w * 1.6)
+			draw_line(mouth + Vector2(-r * 0.2, 0), mouth + Vector2(r * 0.1, r * 0.04), ink, w)
+			draw_line(mouth + Vector2(r * 0.1, r * 0.04), mouth + Vector2(r * 0.24, -r * 0.08), ink, w)
+		Element.LEAF: # calm and gentle: closed relaxed eyes, soft smile
+			draw_arc(le + Vector2(0, -r * 0.06), r * 0.12, PI * 0.1, PI * 0.9, 8, ink, w)
+			draw_arc(re + Vector2(0, -r * 0.06), r * 0.12, PI * 0.1, PI * 0.9, 8, ink, w)
+			draw_arc(mouth + Vector2(0, -r * 0.1), r * 0.12, PI * 0.25, PI * 0.75, 8, ink, w)
+		Element.SUNNY: # joyful and cheerful: ^ ^ eyes, wide open smile
+			draw_arc(le + Vector2(0, r * 0.06), r * 0.12, PI * 1.1, PI * 1.9, 8, ink, w)
+			draw_arc(re + Vector2(0, r * 0.06), r * 0.12, PI * 1.1, PI * 1.9, 8, ink, w)
+			var smile := PackedVector2Array()
+			for i in 9:
+				smile.append(mouth + Vector2(-r * 0.16, -r * 0.08) + Vector2(r * 0.16, 0) + Vector2.from_angle(PI * i / 8.0) * r * 0.16)
+			draw_colored_polygon(smile, ink)
+		Element.NOVA: # apathetic and mysterious (kuudere): flat half-closed eyes, no smile
+			draw_line(le + Vector2(-r * 0.13, 0), le + Vector2(r * 0.13, 0), ink, w)
+			draw_line(re + Vector2(-r * 0.13, 0), re + Vector2(r * 0.13, 0), ink, w)
+			draw_circle(le + Vector2(0, r * 0.05), r * 0.06, ink)
+			draw_circle(re + Vector2(0, r * 0.05), r * 0.06, ink)
+			draw_line(mouth + Vector2(-r * 0.07, 0), mouth + Vector2(r * 0.07, 0), ink, w)
 
 
 func _draw() -> void:
@@ -206,7 +243,7 @@ func _draw() -> void:
 
 	var board_rect := Rect2(origin, Vector2(Board.COLS, Board.ROWS) * cell)
 	draw_rect(board_rect.grow(8), PANEL)
-	draw_rect(Rect2(_cell_pos(Board.SPAWN_COL, Board.HIDDEN), Vector2(cell, cell)), Color(COLORS[0], 0.15))
+	draw_rect(Rect2(_cell_pos(Board.SPAWN_COL, Board.HIDDEN), Vector2(cell, cell)), Color(COLORS[Element.BLAZE], 0.15))
 
 	for y in range(Board.HIDDEN, Board.H):
 		for x in Board.COLS:
@@ -217,20 +254,20 @@ func _draw() -> void:
 			if state == State.POPPING and popping.has(c):
 				var t := anim_t / POP_TIME
 				var flash := int(anim_t / 0.06) % 2 == 1
-				_draw_blob(_cell_pos(x, y), Color.WHITE if flash else COLORS[color - 1], cell, 1 + t * 0.4, 1 - t)
+				_draw_blob(_cell_pos(x, y), color - 1, cell, 1 + t * 0.4, 1 - t, Color.WHITE if flash else null)
 			else:
 				var off: float = drops.get(c, 0) * (1 - min(1.0, anim_t / SETTLE_TIME)) if state == State.SETTLING else 0.0
-				_draw_blob(_cell_pos(x, y - off), COLORS[color - 1], cell)
+				_draw_blob(_cell_pos(x, y - off), color - 1, cell)
 
 	if board.has_piece:
 		var g := board.ghost_pos()
 		for pc in board.piece_cells(g):
 			if pc[0].y >= Board.HIDDEN:
-				_draw_blob(_cell_pos(pc[0].x, pc[0].y), COLORS[pc[1] - 1], cell, 0.45, 0.35)
+				_draw_blob(_cell_pos(pc[0].x, pc[0].y), pc[1] - 1, cell, 0.45, 0.35)
 		var smooth := minf(1.0, fall_timer / fall_delay) if board.can_fall() else 0.0
 		for pc in board.piece_cells():
 			if pc[0].y + smooth >= Board.HIDDEN:
-				_draw_blob(_cell_pos(pc[0].x, pc[0].y + smooth), COLORS[pc[1] - 1], cell)
+				_draw_blob(_cell_pos(pc[0].x, pc[0].y + smooth), pc[1] - 1, cell)
 
 	draw_set_transform(Vector2.ZERO)
 	_draw_hud(vp)
@@ -245,8 +282,8 @@ func _draw_hud(vp: Vector2) -> void:
 		var nxt: Array = board.queue[0]
 		var s := cell * 0.8
 		var p := Vector2(vp.x / 2 - s / 2, 20)
-		_draw_blob(p, COLORS[nxt[1] - 1], s)
-		_draw_blob(p + Vector2(0, s), COLORS[nxt[0] - 1], s)
+		_draw_blob(p, nxt[1] - 1, s)
+		_draw_blob(p + Vector2(0, s), nxt[0] - 1, s)
 	if chain_text_t > 0:
 		var a := minf(1.0, chain_text_t * 3)
 		_label_centered(chain_text, vp.y * 0.4, 72, Color(ACCENT, a))
