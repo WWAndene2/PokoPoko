@@ -207,3 +207,106 @@ Ces mécaniques distinguent PokoPoko des autres jeux du genre. Chacune est **act
 - Les gimmicks d'aide (Poko Étoile, indice de chaîne) sont **interdits en classé**.
 - Aucune manipulation cachée du hasard pour pousser à acheter ou à rejouer.
 - Les deux joueurs d'un versus reçoivent **toujours** la même suite de paires.
+
+---
+
+## 9. Inspirations : Zuma, Montezuma, Candy Crush, Puzzle & Dragons 💡
+
+On reprend des **idées de mécaniques** (non protégeables), jamais le nom, l'art, les sons ou le code de ces jeux.
+Chaque idée est adaptée au cœur de PokoPoko : **paires qui tombent + chaînes par gravité**.
+
+### 9.1 Ce qu'on retient de chaque jeu
+
+| Jeu | Ce qui le rend addictif | Adaptation PokoPoko |
+|---|---|---|
+| **Zuma** | Une file qui avance vers un trou : tension permanente ; les trous qui se referment provoquent des réactions en chaîne ; boules spéciales | **Montée du sol** (9.2), **Pokos Pouvoir** (9.3) |
+| **Montezuma** (Treasures of Montezuma) | Niveaux chronométrés, totems de bonus qui se chargent en jouant, étoiles selon la vitesse | **Totems** (9.4), **3 étoiles par niveau** (9.6) |
+| **Candy Crush** | Bonbons spéciaux créés par de gros groupes, combinaisons de spéciaux, carte de niveaux avec objectifs variés et coups limités | **Pokos spéciaux selon la taille du groupe** (9.5), **mode Aventure** (9.6) |
+| **Puzzle & Dragons** | Les combos attaquent des monstres, équipe de héros avec compétences par couleur, progression RPG | **Mode Donjon** (9.7) avec équipe de Compagnons |
+
+### 9.2 Montée du sol (inspiré de Zuma) — mode Aventure et Survie
+- Toutes les **N poses** (N = 8 au départ), une ligne de Pokos aléatoires **monte par le bas** et pousse toute la grille d'une case vers le haut.
+- Un compteur visible annonce la prochaine montée (« 3 ↑ »).
+- Chaque chaîne de **3 maillons ou plus** **repousse** la montée de 2 poses.
+- Effet recherché : la tension de la file de Zuma qui avance vers le trou.
+
+### 9.3 Pokos Pouvoir (inspiré des boules spéciales de Zuma)
+Un Poko Pouvoir a la couleur d'un Poko normal plus un symbole. Il agit **quand son groupe éclate**. Apparition rare (≈ 1 paire sur 30) ; **désactivé en classé**.
+
+| Pouvoir | Effet |
+|---|---|
+| ⏪ **Recul** | Annule la prochaine montée du sol (ou 6 grumeaux en attente en versus) |
+| 🐢 **Lenteur** | Chute 2× plus lente pendant 10 s |
+| 🎯 **Viseur** | Pendant 3 poses, l'ombre montre aussi quels groupes la pose ferait éclater |
+| 💥 **Explosion** | Éclate aussi les 8 cases autour de lui |
+
+### 9.4 Totems (inspiré de Montezuma)
+- 3 totems à côté de la grille, chacun lié à une couleur (tirée au début du niveau).
+- Chaque Poko éclaté de cette couleur **charge** le totem (20 Pokos = plein).
+- Toucher un totem plein déclenche son effet :
+
+| Totem | Effet |
+|---|---|
+| 🌊 **Vague** | Éclate toute la ligne du bas |
+| 🌈 **Prisme** | Transforme les 2 prochaines paires en une seule couleur |
+| 🔄 **Mélange** | Échange les couleurs de 2 couleurs choisies sur toute la grille |
+
+- Les totems se gagnent en jouant, **jamais en payant** ; **désactivés en classé**.
+
+### 9.5 Pokos spéciaux créés par les gros groupes (inspiré de Candy Crush)
+Quand un groupe éclate, sa **taille et sa forme** laissent un Poko spécial à la place du dernier Poko posé :
+
+| Groupe éclaté | Poko spécial créé | Effet quand il éclate à son tour |
+|---|---|---|
+| 5 en **ligne droite** | **Fusée** ➡️ | Éclate toute sa ligne (ou colonne si le groupe était vertical) |
+| 5+ en **L ou T** | **Bombe** 💣 | Éclate un carré de 3×3 autour de lui |
+| **7+** | **Arc-en-ciel** 🌈 | Éclate tous les Pokos de la couleur qui le touche le plus |
+
+**Combinaisons** : si deux spéciaux éclatent dans le même maillon, leurs effets se combinent (Fusée + Fusée = croix ; Bombe + Fusée = 3 lignes ; Arc-en-ciel + spécial = tous les Pokos de cette couleur deviennent ce spécial).
+
+> Règle d'équilibre : les spéciaux font **toujours partie de la chaîne** (les Pokos qu'ils éclatent comptent dans le maillon en cours, puis la gravité continue). Ils récompensent ainsi les gros groupes **sans remplacer** la construction de chaînes, qui reste la meilleure façon de marquer.
+> Mode **Classique** (classé) : sans spéciaux, règles pures de la section 2.
+
+### 9.6 Mode Aventure (inspiré de Candy Crush et Montezuma)
+- **Carte de niveaux** (îles thématiques de 15 niveaux), chaque niveau avec **un objectif** et une limite de **paires** ou de **temps**.
+- **3 étoiles** par niveau selon le score ; les étoiles débloquent les îles suivantes et des cosmétiques.
+
+| Type d'objectif | Exemple |
+|---|---|
+| **Score** | 20 000 points en 40 paires |
+| **Couleur** | Éclater 60 Pokos roses |
+| **Chaîne** | Réussir une chaîne de 4 maillons |
+| **Nettoyage** | Faire disparaître tous les grumeaux / Pokos gelés / dormeurs |
+| **Délivrance** | Faire descendre 3 « bébés Pokos » coincés en haut jusqu'au sol |
+| **Survie** | Tenir 90 s avec la montée du sol |
+
+- **Pas de vies ni d'énergie** (règle du document stratégique) : on peut rejouer un niveau autant qu'on veut.
+- Après 3 échecs, proposer **gratuitement** une aide (ex. +5 paires ou un indice), jamais une offre payante au moment de la frustration.
+
+### 9.7 Mode Donjon (inspiré de Puzzle & Dragons)
+- Le joueur affronte une suite de **monstres** (3 à 5 étages, un boss à la fin).
+- Chaque **éclatement attaque** le monstre : dégâts = points du maillon ÷ 10, de la couleur des Pokos éclatés.
+- Le monstre **riposte** toutes les N poses (compteur visible) en envoyant des grumeaux, des Pokos gelés ou en accélérant la chute.
+- **Faiblesses de couleur** : rose > vert > bleu > rose (×2 de dégâts), jaune et violet sont neutres.
+- **Équipe de 4 Compagnons** (personnages Pokos originaux), chacun lié à une couleur :
+  - **Bonus passif** : ex. +50 % de dégâts pour sa couleur.
+  - **Compétence active** chargée par les éclatements de sa couleur : ex. « transforme les grumeaux en Pokos jaunes », « arrête le compteur du monstre pendant 3 poses ».
+- **Progression** : les Compagnons gagnent des niveaux en jouant ; ils se débloquent **en jouant** (fin de donjon, défis), pas par tirage payant (pas de loot box, voir section 8).
+- La progression des Compagnons ne s'applique **qu'en Donjon** et n'affecte jamais le versus ni le classé.
+
+### 9.8 Récapitulatif des modes avec les nouveautés
+
+| Mode | Spéciaux (9.5) | Pouvoirs (9.3) | Totems (9.4) | Montée du sol (9.2) |
+|---|---|---|---|---|
+| Classique / Versus classé | ✗ | ✗ | ✗ | ✗ |
+| Solo infini | ✓ | ✓ | ✗ | ✓ |
+| Aventure | selon niveau | selon niveau | selon niveau | selon niveau |
+| Donjon | ✓ | ✓ | ✗ (remplacés par les Compagnons) | ✗ |
+| Versus amical | option | option | option | ✗ |
+
+### 9.9 Ordre de développement conseillé
+1. **Pokos spéciaux** (9.5) : le plus gros gain de plaisir immédiat, et facile à tester.
+2. **Mode Aventure** (9.6) avec 15 premiers niveaux : donne des objectifs et de la variété.
+3. **Montée du sol** (9.2) et **Pokos Pouvoir** (9.3).
+4. **Versus IA** (section 4).
+5. **Donjon** (9.7) : le plus gros chantier (monstres, Compagnons, équilibrage).
