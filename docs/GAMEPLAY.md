@@ -310,3 +310,76 @@ Quand un groupe éclate, sa **taille et sa forme** laissent un Poko spécial à 
 3. **Montée du sol** (9.2) et **Pokos Pouvoir** (9.3).
 4. **Versus IA** (section 4).
 5. **Donjon** (9.7) : le plus gros chantier (monstres, Compagnons, équilibrage).
+
+---
+
+## 10. Inspirations de toute la franchise Puyo Puyo 💡
+
+Rappel légal : les **règles** du genre sont libres, mais le nom « Puyo », les personnages (Arle, Carbuncle…), les voix, musiques, dessins et formules connues (« Bayoeen ! ») appartiennent à SEGA. On reprend **uniquement des mécaniques**, renommées et redessinées.
+
+### 10.1 Ce que chaque épisode apporte
+
+| Épisode (mécanique) | Idée retenue | Nom PokoPoko |
+|---|---|---|
+| Puyo Puyo (1991) | Règles de base, mode histoire contre une suite d'adversaires | ✅ base + **Tournée** (10.2) |
+| Puyo Puyo 2 / Tsu | **Contre-attaque** (annulation), **grille vide**, garbage en attente | Section 4 ✅ (design) |
+| Puyo Puyo Sun | **Puyos Soleil** : bulles qui augmentent la force de l'attaque | **Pokos Soleil** (10.3) |
+| Puyo Puyo~n | **Cartes de personnage** à pouvoir unique | **Signatures** des Compagnons (10.4) |
+| Puyo Puyo Fever | **Mode Fièvre**, **formes de paires variées** (trios, quatuors), **compteur de temps de chute** | Fièvre (5.3) + **Formes** (10.5) |
+| Puyo Puyo 7 | **Transformation géante** : grosses bulles plus faciles à éclater | **Mode Méga** (10.6) |
+| Puyo Puyo 15th / 20th | Dizaines de **règles alternatives** (Bombe, Sous-marin, Excavation, Glace…) | **Fêtes** (10.7) |
+| Puyo Puyo Tetris | Mélange avec un autre genre, **Swap** et **Fusion** | **Mode Mash-up** (10.8), avec un genre maison |
+| Puyo Puyo!! Quest | RPG de cartes déclenché par les éclatements | Mode Donjon (9.7) ✅ (design) |
+| Puyo Puyo Champions / eSport | **Règles compétitives figées**, classement, replays | **Règle Classique** (section 8) + 10.9 |
+
+### 10.2 Tournée (mode histoire)
+- Suite de **10 adversaires IA** de plus en plus forts, chacun avec un style (bâtisseur de longues chaînes, attaquant rapide, défenseur…).
+- Courtes scènes entre les combats avec des **personnages Pokos originaux**.
+- Le dernier adversaire a une règle spéciale (ex. ses grumeaux sont toujours gelés).
+
+### 10.3 Pokos Soleil ☀️
+- Variante du grumeau envoyé par une **contre-attaque** réussie.
+- Dans la grille de celui qui le reçoit, il se comporte comme un grumeau, mais s'il **éclate à côté d'un groupe**, il ajoute **+3 grumeaux** à l'attaque de ce joueur.
+- Encourage le retournement de situation. Mode « Soleil » optionnel.
+
+### 10.4 Signatures des Compagnons
+- Chaque Compagnon a une **signature** : une petite règle qui lui est propre (ex. « vos grumeaux tombent 1 pose plus tard », « +1 maillon de puissance à la 1ʳᵉ chaîne de 5+ »).
+- Uniquement en Versus amical et Donjon ; **jamais en classé**.
+
+### 10.5 Formes de paires 🧩
+- Chaque Compagnon a sa **suite de formes** (16 pièces qui se répètent) : paires simples, **trios en L**, **quatuors carrés** de 2 couleurs, **gros Poko** d'une seule couleur (2×2) qui change de couleur quand on le tourne.
+- Rend chaque personnage différent à jouer ; mode Classique = paires uniquement.
+
+### 10.6 Mode Méga 🎈
+- Une jauge se remplit en éclatant des Pokos (attaque + défense).
+- Pleine : pendant **20 s**, la grille passe en **3×6 cases géantes** ; les groupes éclatent dès **3** Pokos et les attaques sont **×1,5**.
+- À la fin, retour à la grille normale (intacte).
+
+### 10.7 Fêtes (règles alternatives tournantes)
+Une règle mise en avant chaque semaine en Versus amical :
+
+| Fête | Règle |
+|---|---|
+| **Bombes** | Les grumeaux sont remplacés par des bombes à retardement (5 poses) qui ajoutent 2 lignes si elles ne sont pas désamorcées |
+| **Glace** | Toute attaque envoie des Pokos gelés (5.2) au lieu de grumeaux |
+| **Excavation** | Grille pré-remplie avec un **trésor** enfoui ; le premier qui le fait remonter en haut gagne |
+| **Sous-marin** | La gravité s'inverse toutes les 30 s (les Pokos « flottent » vers le haut) |
+| **Grande grille** | 8 colonnes × 14 lignes, 5 couleurs |
+| **Taille 3** | Les groupes éclatent dès 3 Pokos, attaques réduites |
+
+### 10.8 Mode Mash-up
+- Mélange avec un second genre **original** (pas Tetris) : par exemple des **blocs à aligner** (règles de ligne pleine) qui tombent entre les paires.
+- Variante **Échange** : toutes les 25 s, on bascule entre la grille Pokos et la grille Blocs ; les attaques des deux comptent.
+- À valider très tard : gros chantier.
+
+### 10.9 Couche eSport
+- **Règle Classique figée** et publiée (version, valeurs exactes) ; tout changement est annoncé.
+- **Même graine** pour les deux joueurs, résultat **vérifié par le serveur**.
+- **Replays** de chaque match classé, mode **spectateur** avec l'aperçu des paires suivantes des deux joueurs.
+- **Premier à 2 / 3 / 7 manches** au choix pour les tournois.
+- **Saisons** de classement avec réinitialisation douce.
+
+### 10.10 À éviter (vient de la franchise mais déconseillé)
+- **Personnages ou voix** ressemblant à ceux de SEGA.
+- **Tirage de cartes payant** (modèle Puyo Puyo!! Quest) : contraire à la section 8.
+- **Énergie / endurance** qui limite le nombre de parties.
