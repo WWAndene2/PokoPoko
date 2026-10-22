@@ -3,11 +3,15 @@ extends RefCounted
 ## Computer opponent: picks a placement for each new pair, then plays it
 ## with human-like inputs (one action every few frames).
 
-enum Level { EASY, NORMAL, HARD }
+enum Level { EASY, NORMAL, HARD, EXTREME, INSANE }
 
-const ACTION_DELAY := [0.28, 0.14, 0.07]
-const TARGET_CHAIN := [1, 3, 5] # chain length it tries to build before firing
-const NOISE := [400.0, 60.0, 0.0]
+const THINK_TIME := [0.9, 0.5, 0.25, 0.1, 0.0] # pause before the first move of each pair
+const ACTION_DELAY := [0.55, 0.38, 0.28, 0.14, 0.07]
+const TARGET_CHAIN := [1, 1, 1, 3, 5] # chain length it tries to build before firing
+const NOISE := [2500.0, 900.0, 400.0, 60.0, 0.0] # randomness in its choice: higher = sloppier
+# How a planned pair is dropped: let it fall on its own, soft drop, or hard drop
+enum Drop { NONE, SOFT, HARD }
+const DROP := [Drop.NONE, Drop.SOFT, Drop.SOFT, Drop.HARD, Drop.HARD]
 
 var player: Player
 var level := Level.NORMAL
@@ -27,7 +31,7 @@ func update(delta: float) -> void:
 	if planned_for != player.piece_id:
 		planned_for = player.piece_id
 		plan = _make_plan()
-		action_timer = 0.0
+		action_timer = -THINK_TIME[level]
 	action_timer += delta
 	if action_timer < ACTION_DELAY[level] or plan.is_empty():
 		return
@@ -38,10 +42,9 @@ func update(delta: float) -> void:
 		"CW": player.rotate(1)
 		"CCW": player.rotate(-1)
 		"DROP":
-			if level == Level.EASY:
-				player.soft_drop = true
-			else:
-				player.hard_drop()
+			match DROP[level]:
+				Drop.SOFT: player.soft_drop = true
+				Drop.HARD: player.hard_drop()
 
 
 func _make_plan() -> Array:
@@ -86,7 +89,7 @@ func _evaluate(sim: Board, res: Dictionary) -> float:
 			value -= 300.0
 	value += _connections(sim) * 12.0
 	value -= max_h * 8.0 + heights[Board.SPAWN_COL] * 25.0
-	if level == Level.HARD:
+	if level == Level.INSANE:
 		value += _chain_potential(sim) * 250.0
 	return value
 

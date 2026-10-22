@@ -133,13 +133,13 @@ func test_ccw_rotation() -> void:
 	check(b.rot == 3, "counter-clockwise turns the satellite to the left")
 
 
-## Two hard AIs play each other headless: checks the whole loop runs and garbage is exchanged.
+## Two strong AIs play each other headless: checks the whole loop runs and garbage is exchanged.
 func test_ai_match() -> void:
 	var p1 := Player.new()
 	var p2 := Player.new()
 	p1.start(42, true)
 	p2.start(42, true)
-	var ais := [AI.new(p1, AI.Level.HARD), AI.new(p2, AI.Level.NORMAL)]
+	var ais := [AI.new(p1, AI.Level.INSANE), AI.new(p2, AI.Level.EXTREME)]
 	var ps := [p1, p2]
 	var sent := 0
 	var over := false

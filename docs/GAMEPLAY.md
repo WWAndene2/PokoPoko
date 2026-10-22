@@ -182,7 +182,7 @@ Ces mécaniques distinguent PokoPoko des autres jeux du genre. Chacune est **act
 |---|---|---|
 | **Solo infini** | ✅ | Survivre le plus longtemps possible, score maximal. La vitesse augmente. |
 | **Entraînement** | 🔜 | Pas de chute automatique, retour en arrière d'un coup, indice de chaîne. |
-| **Versus IA** | ✅ | Combat avec grumeaux contre l'ordinateur, 5 niveaux (de « pose au hasard » à « prépare des chaînes de 6+ »). |
+| **Versus IA** | ✅ | Combat avec grumeaux contre l'ordinateur, en 2 manches gagnantes. 5 niveaux : **Easy** (lent, hésite, place presque au hasard), **Normal**, **Hard**, **Extreme** (prépare des chaînes de 3), **Insane** (prépare des chaînes de 5+ et anticipe). |
 | **Défi du jour** | 🔜 | Même suite de paires pour tout le monde (même graine), 1 essai classé + essais libres, code à partager entre amis. |
 | **Puzzle** | 💡 | Grille imposée + liste de paires fixe : réaliser une chaîne de N maillons. |
 | **Fièvre** | 💡 | Voir 5.3. |

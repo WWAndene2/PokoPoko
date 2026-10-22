@@ -34,10 +34,13 @@ const GARBAGE_ICONS := [
 
 const MENU_ITEMS := [
 	["Solo", -1],
-	["Versus IA · Facile", AI.Level.EASY],
+	["Versus IA · Easy", AI.Level.EASY],
 	["Versus IA · Normal", AI.Level.NORMAL],
-	["Versus IA · Difficile", AI.Level.HARD],
+	["Versus IA · Hard", AI.Level.HARD],
+	["Versus IA · Extreme", AI.Level.EXTREME],
+	["Versus IA · Insane", AI.Level.INSANE],
 ]
+const MENU_COLORS := [Color("#2f8fff"), Color("#7ee36b"), Color("#ffd84f"), Color("#ff9a3c"), Color("#ff4f6a"), Color("#9b6bff")]
 
 var screen := Screen.MENU
 var players: Array[Player] = []
@@ -69,7 +72,7 @@ var link_birth := [{}, {}] # per player: Vector3i(x, y, dir) -> time the fusion 
 const L_SHADE := 1
 const L_FILL := 2
 const L_DETAIL := 4
-const FUSE_TIME := 0.22
+const FUSE_TIME := 0.6
 
 # Touch tracking
 var touch_start := Vector2.ZERO
@@ -236,7 +239,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _menu_y(i: int) -> float:
-	return get_viewport_rect().size.y * 0.5 + i * 115
+	return get_viewport_rect().size.y * 0.4 + i * 100
 
 
 func _menu_tap(at: Vector2) -> void:
@@ -247,7 +250,7 @@ func _menu_tap(at: Vector2) -> void:
 			_start_round()
 		return
 	for i in MENU_ITEMS.size():
-		if absf(at.y - _menu_y(i)) < 48:
+		if absf(at.y - _menu_y(i)) < 44:
 			_start(MENU_ITEMS[i][1])
 			return
 
@@ -344,12 +347,11 @@ func _draw_menu(vp: Vector2) -> void:
 	for k in 5:
 		var bounce := absf(sin(clock * 3.0 + k * 0.7)) * 18
 		_draw_blob(Vector2(vp.x / 2 - 190 + k * 76, vp.y * 0.13 - bounce), k + 1, 72)
-	_text_centered("PokoPoko", vp.y * 0.3, 120, ACCENT)
-	_text_centered("Record solo : %d" % best, vp.y * 0.36, 30, MUTED)
+	_text_centered("PokoPoko", vp.y * 0.25, 120, ACCENT)
+	_text_centered("Record solo : %d" % best, vp.y * 0.3, 30, MUTED)
 	for i in MENU_ITEMS.size():
 		var y := _menu_y(i)
-		var color: Color = PLAYER_COLORS[0] if i == 0 else COLORS[[0, Element.LEAF, Element.SUNNY, Element.BLAZE][i]].darkened(0.15)
-		_panel(Rect2(vp.x * 0.13, y - 44, vp.x * 0.74, 88), Color(BOARD_BG, 0.9), color, 6, 44)
+		_panel(Rect2(vp.x * 0.13, y - 40, vp.x * 0.74, 80), Color(BOARD_BG, 0.9), MENU_COLORS[i], 6, 40)
 		_text_centered(MENU_ITEMS[i][0], y + 14, 38, Color.WHITE)
 	_text_centered("Glisser : déplacer   ·   Toucher gauche / droite : tourner", vp.y * 0.92, 22, MUTED)
 	_text_centered("Glisser vers le bas : descendre   ·   vite : chute", vp.y * 0.95, 22, MUTED)
@@ -439,36 +441,49 @@ func _draw_player(i: int) -> void:
 	var still := func(c: Vector2i) -> bool:
 		return not (animating and p.drops.has(c)) and not (p.state == Player.State.POPPING and p.popping.has(c))
 
-	# Fusion: touching same-color Pokos melt into one jelly body, like in the original games.
-	# Only Pokos at rest fuse; falling, landing or popping ones are drawn on their own.
-	var rigid := func(c: Vector2i) -> bool:
-		return still.call(c) and p.fall_offset(c) <= 0.0 and absf(_land_squash(p, c).x - 1.0) < 0.03
+	# Fusion: touching same-color Pokos stick together like jelly. Each body stretches toward
+	# its fused neighbours until the shapes overlap into one mass; no separate bridge is drawn.
+	var sticky := func(c: Vector2i) -> bool:
+		return still.call(c) and p.fall_offset(c) <= 0.0
 	var center := func(c: Vector2i) -> Vector2: return at.call(c.x + 0.5, c.y + 0.5)
 	var links := [] # [Vector2i a, Vector2i b, kind, grow]
-	var fused := {}
+	var arms := {} # Vector2i -> [[direction, grow], ...]
 	var births := {}
 	for y in range(Board.HIDDEN, Board.H):
 		for x in Board.COLS:
 			var kind: int = b.grid[y][x]
 			var a := Vector2i(x, y)
-			if kind == 0 or kind == Board.GARBAGE or not rigid.call(a):
+			if kind == 0 or kind == Board.GARBAGE or not sticky.call(a):
 				continue
 			for dir in [Vector2i.RIGHT, Vector2i.DOWN]:
 				var n: Vector2i = a + dir
-				if n.x < Board.COLS and n.y < Board.H and b.grid[n.y][n.x] == kind and rigid.call(n):
+				if n.x < Board.COLS and n.y < Board.H and b.grid[n.y][n.x] == kind and sticky.call(n):
 					var key := Vector3i(x, y, 0 if dir == Vector2i.RIGHT else 1)
 					var born: float = link_birth[i].get(key, clock)
 					births[key] = born
-					links.append([a, n, kind, _jelly_grow(clock - born)])
-					fused[a] = true
-					fused[n] = true
+					var grow := _jelly_grow(clock - born)
+					links.append([a, n, kind, grow])
+					if not arms.has(a):
+						arms[a] = []
+					if not arms.has(n):
+						arms[n] = []
+					arms[a].append([Vector2(dir), grow])
+					arms[n].append([-Vector2(dir), grow])
 	link_birth[i] = births
+
+	# Squash spreads through a fused group: a Poko landing on its group makes the whole mass wobble
+	var squash := {}
+	for c in arms:
+		var k := _land_k(p, c)
+		for arm in arms[c]:
+			k += 0.45 * _land_k(p, c + Vector2i(arm[0]))
+		squash[c] = Vector2(1.0 + k, 1.0 - k)
 
 	for y in range(Board.HIDDEN, Board.H):
 		for x in Board.COLS:
 			var color: int = b.grid[y][x]
 			var c := Vector2i(x, y)
-			if color == 0 or fused.has(c):
+			if color == 0 or arms.has(c):
 				continue
 			if p.state == Player.State.POPPING and p.popping.has(c):
 				# Swell and flash, then burst (particles spawn in _on_pop)
@@ -485,23 +500,18 @@ func _draw_player(i: int) -> void:
 					var idle := _idle(color, x, y)
 					_draw_blob(at.call(x, y) + idle.offset * cell, color, cell, 1.0, 1.0, null, _land_squash(p, c) * idle.squash, idle.tilt, idle.blink)
 
-	# Fused groups, layer by layer so necks blend seamlessly: aura, shade, body, element effect, faces
+	# Fused groups, layer by layer so the bodies blend into one: aura, shade, body, element life, faces
 	var r := cell / 2 - 2
-	for c in fused:
+	for c in arms:
 		_draw_aura(b.grid[c.y][c.x], center.call(c), r)
-	for l in links:
-		_neck(center.call(l[0]) + Vector2(0, r * 0.08), center.call(l[1]) + Vector2(0, r * 0.08), r, l[3], COLORS[l[2] - 1].darkened(0.35))
-	for c in fused:
-		_draw_blob(at.call(c.x, c.y), b.grid[c.y][c.x], cell, 1.0, 1.0, null, Vector2.ONE, 0.0, false, L_SHADE)
-	for l in links:
-		_neck(center.call(l[0]), center.call(l[1]), r, l[3], COLORS[l[2] - 1])
-	for c in fused:
-		_draw_blob(at.call(c.x, c.y), b.grid[c.y][c.x], cell, 1.0, 1.0, null, Vector2.ONE, 0.0, false, L_FILL)
+	for layer in [L_SHADE, L_FILL]:
+		for c in arms:
+			_draw_blob(at.call(c.x, c.y), b.grid[c.y][c.x], cell, 1.0, 1.0, null, squash[c], 0.0, false, layer, arms[c])
 	for l in links:
 		_link_fx(l[2], center.call(l[0]), center.call(l[1]), r, l[3], float(l[0].x * 3 + l[0].y * 5) * 0.71)
-	for c in fused:
+	for c in arms:
 		var idle := _idle(b.grid[c.y][c.x], c.x, c.y)
-		_draw_blob(at.call(c.x, c.y), b.grid[c.y][c.x], cell, 1.0, 1.0, null, Vector2.ONE, 0.0, idle.blink, L_DETAIL)
+		_draw_blob(at.call(c.x, c.y), b.grid[c.y][c.x], cell, 1.0, 1.0, null, squash[c], 0.0, idle.blink, L_DETAIL, arms[c])
 
 	if b.has_piece and p.state == Player.State.FALLING:
 		var g := b.ghost_pos()
@@ -588,16 +598,22 @@ func _draw_pending(n: int, at: Vector2, cell: float) -> void:
 ## `kind` is a board value: 1..5 element, Board.GARBAGE for nuisance.
 ## `squash` scales around the Poko's bottom (x = width, y = height), `tilt` rotates it.
 func _draw_blob(at: Vector2, kind: int, size: float, scale: float = 1.0, alpha: float = 1.0, tint: Variant = null,
-		squash := Vector2.ONE, tilt := 0.0, blink := false, layers := L_SHADE | L_FILL | L_DETAIL) -> void:
+		squash := Vector2.ONE, tilt := 0.0, blink := false, layers := L_SHADE | L_FILL | L_DETAIL, arms := []) -> void:
 	var r := (size / 2 - 2) * scale
 	draw_set_transform(at + Vector2(size / 2, size / 2 + r), tilt, squash)
 	var c := Vector2(0, -r)
 	var base: Color = GARBAGE_COLOR if kind == Board.GARBAGE else COLORS[kind - 1]
 	var fill: Color = tint if tint != null else base
-	if layers & L_SHADE:
-		draw_circle(c + Vector2(0, r * 0.08), r, Color(base.darkened(0.35), alpha)) # bottom shade
-	if layers & L_FILL:
-		draw_circle(c, r * 0.96, Color(fill, alpha))
+	if arms.is_empty():
+		if layers & L_SHADE:
+			draw_circle(c + Vector2(0, r * 0.08), r, Color(base.darkened(0.35), alpha)) # bottom shade
+		if layers & L_FILL:
+			draw_circle(c, r * 0.96, Color(fill, alpha))
+	else:
+		if layers & L_SHADE:
+			draw_colored_polygon(_jelly_shape(c + Vector2(0, r * 0.08), r, arms, size), Color(base.darkened(0.35), alpha))
+		if layers & L_FILL:
+			draw_colored_polygon(_jelly_shape(c, r * 0.96, arms, size), Color(fill, alpha))
 	if not layers & L_DETAIL:
 		draw_set_transform(Vector2.ZERO)
 		return
@@ -660,13 +676,18 @@ func _draw_face(c: Vector2, r: float, element: int, ink: Color, blink := false) 
 
 ## Damped spring after landing: squashed flat at impact, then wobbles back to round.
 func _land_squash(p: Player, c: Vector2i) -> Vector2:
+	var k := _land_k(p, c)
+	return Vector2(1.0 + k, 1.0 - k)
+
+
+## Squash amount (0 = round, > 0 = flattened) of the Poko at `c`.
+func _land_k(p: Player, c: Vector2i) -> float:
 	if not p.land.has(c):
-		return Vector2.ONE
+		return 0.0
 	var dt: float = p.time - p.land[c][0]
 	if dt < 0.0 or dt > 0.8:
-		return Vector2.ONE
-	var k: float = 0.22 * p.land[c][1] * exp(-6.5 * dt) * cos(21.0 * dt)
-	return Vector2(1.0 + k, 1.0 - k)
+		return 0.0
+	return 0.22 * p.land[c][1] * exp(-6.5 * dt) * cos(21.0 * dt)
 
 
 ## Idle "emotion" motion for a settled Poko. Offset is in cells.
@@ -787,31 +808,27 @@ func _draw_fx() -> void:
 
 # --- Fusion ------------------------------------------------------------------
 
-## Neck growth when two Pokos fuse: springs past full size, then settles (ease-out-back).
+## How far a fusion has formed: snaps in, overshoots and wobbles like sticky jelly.
 func _jelly_grow(age: float) -> float:
-	var u := clampf(age / FUSE_TIME, 0.0, 1.0) - 1.0
-	return 1.0 + 2.70158 * u * u * u + 1.70158 * u * u
+	if age >= FUSE_TIME:
+		return 1.0
+	return 1.0 - exp(-7.0 * age) * cos(16.0 * age)
 
 
-## Jelly neck between two fused Pokos: pinched in the middle, curved sides (metaball look).
-func _neck(c1: Vector2, c2: Vector2, r: float, grow: float, color: Color) -> void:
-	if grow <= 0.02:
-		return
-	var u := (c2 - c1).normalized()
-	var n := Vector2(-u.y, u.x)
-	var mid := (c1 + c2) / 2
-	var edge := r * 0.9
-	var waist := r * lerpf(0.12, 0.7, grow)
+## Outline of a jelly Poko: a circle that bulges toward each fused neighbour with a wide,
+## soft shoulder, reaching past the cell edge so two neighbours overlap into one body.
+func _jelly_shape(c: Vector2, r: float, arms: Array, size: float) -> PackedVector2Array:
+	var reach := size / 2 - r + r * 0.55
 	var pts := PackedVector2Array()
-	for side in [1.0, -1.0]:
-		var p0: Vector2 = c1 + n * edge * side
-		var p2: Vector2 = c2 + n * edge * side
-		var ctrl: Vector2 = mid + n * (2.0 * waist - edge) * side
-		var samples := range(11) if side > 0 else range(10, -1, -1)
-		for k in samples:
-			var t: float = k / 10.0
-			pts.append(p0.lerp(ctrl, t).lerp(ctrl.lerp(p2, t), t))
-	draw_colored_polygon(pts, color)
+	for k in 48:
+		var ang := TAU * k / 48.0
+		var rad := r
+		for arm in arms:
+			var w := clampf((cos(ang - arm[0].angle()) - 0.42) / 0.58, 0.0, 1.0)
+			w = w * w * (3.0 - 2.0 * w)
+			rad = maxf(rad, r + reach * arm[1] * w)
+		pts.append(c + Vector2.from_angle(ang) * rad)
+	return pts
 
 
 ## Soft elemental glow behind a fused Poko.
@@ -829,60 +846,53 @@ func _draw_aura(kind: int, c: Vector2, r: float) -> void:
 			draw_circle(c, r * 1.24, Color("#14062e", 0.45))
 
 
-## Animated element effect inside a fusion neck.
+## Element life where two Pokos are stuck together (no lines: particles living in the jelly).
 func _link_fx(kind: int, c1: Vector2, c2: Vector2, r: float, grow: float, seed: float) -> void:
 	var a := clampf(grow, 0.0, 1.0)
 	if a <= 0.05:
 		return
 	var t := clock
-	var u := (c2 - c1).normalized()
-	var n := Vector2(-u.y, u.x)
-	var along := func(s: float, amp: float, freq: float, phase: float) -> Vector2:
-		return c1.lerp(c2, s) + n * sin(s * TAU * freq + phase) * amp
+	var mid := (c1 + c2) / 2
+	var horizontal := absf(c2.x - c1.x) > absf(c2.y - c1.y)
 	match kind - 1:
-		Element.AQUA: # water: a rippling current with bubbles drifting through
-			var wave := PackedVector2Array()
-			for k in 13:
-				wave.append(along.call(k / 12.0, r * 0.14, 1.5, t * 4.0 + seed))
-			draw_polyline(wave, Color(COLORS[Element.AQUA].lightened(0.6), 0.75 * a), r * 0.22, true)
+		Element.AQUA: # water: bubbles rising through the joint, a wet shine
+			draw_circle(mid + Vector2(-r * 0.1, -r * 0.15), r * 0.16, Color(1, 1, 1, 0.28 * a))
 			for k in 3:
-				var s := fmod(t * 0.55 + k / 3.0 + seed, 1.0)
-				var bp: Vector2 = along.call(s, r * 0.28, 1.0, seed * 2.0 + k)
-				draw_arc(bp, r * 0.14 * (0.6 + 0.4 * sin(s * PI)), 0, TAU, 12, Color(1, 1, 1, 0.85 * a), maxf(1.5, r * 0.05))
-				draw_circle(bp - Vector2(r * 0.03, r * 0.03), r * 0.025, Color(1, 1, 1, 0.8 * a))
-		Element.BLAZE: # fire: glowing core and flickering flames licking upward
-			draw_line(c1.lerp(c2, 0.2), c1.lerp(c2, 0.8), Color("#ffd36b", 0.5 * a), r * 0.34)
+				var s := fmod(t * 0.5 + k / 3.0 + seed, 1.0)
+				var bp := mid + Vector2(sin(s * TAU + seed + k) * r * 0.22, (0.5 - s) * r * 0.9)
+				var br := r * 0.11 * (0.5 + 0.5 * sin(s * PI))
+				draw_arc(bp, br, 0, TAU, 12, Color(1, 1, 1, 0.85 * a * sin(s * PI)), maxf(1.5, r * 0.05))
+				draw_circle(bp - Vector2(br, br) * 0.35, br * 0.3, Color(1, 1, 1, 0.9 * a * sin(s * PI)))
+		Element.BLAZE: # fire: flames licking up from the joint, embers drifting away
+			draw_circle(mid, r * 0.3, Color("#ffd36b", 0.35 * a))
 			for k in 3:
-				var base := c1.lerp(c2, 0.3 + 0.2 * k) + (Vector2(0, -r * 0.42) if absf(u.x) > 0.5 else Vector2((k - 1) * r * 0.32, r * 0.05))
+				var base := mid + (Vector2((k - 1) * r * 0.28, -r * 0.45) if horizontal else Vector2((k - 1) * r * 0.3, r * 0.05))
 				var h := r * (0.6 + 0.22 * sin(t * 13.0 + k * 2.1 + seed)) * a
 				var sway := sin(t * 17.0 + k * 1.7 + seed) * r * 0.1
 				_flame(base, r * 0.2, h, sway, Color("#ffae2e", 0.95 * a))
 				_flame(base, r * 0.11, h * 0.62, sway * 0.6, Color("#fff3a0", a))
-		Element.LEAF: # plant: a swaying vine with two leaves
-			var vine := PackedVector2Array()
-			for k in 13:
-				vine.append(along.call(k / 12.0, r * 0.12, 1.0, seed + sin(t * 1.3) * 0.6))
-			draw_polyline(vine, Color("#2f8a34", 0.85 * a), r * 0.1, true)
-			var mid := (c1 + c2) / 2
+			for k in 2:
+				var s := fmod(t * 0.8 + k * 0.5 + seed, 1.0)
+				draw_circle(mid + Vector2(sin(s * 9.0 + seed) * r * 0.3, -r * 0.5 - s * r * 1.2), r * 0.05 * (1 - s), Color("#ffcf5a", (1 - s) * a))
+		Element.LEAF: # plant: two leaves sprouting from the joint, swaying
 			var sway := sin(t * 1.6 + seed) * 0.35
-			_leaf(mid + n * r * 0.12, n.angle() - 0.6 + sway, r * 0.42 * a, r * 0.14, Color("#c4ff8a", 0.95 * a))
-			_leaf(mid - n * r * 0.12, (-n).angle() + 0.6 - sway, r * 0.36 * a, r * 0.12, Color("#a8f07a", 0.95 * a))
-		Element.SUNNY: # light: a pulsing beam of light with twinkling sparkles
-			var pulse := 0.45 + 0.2 * sin(t * 5.0 + seed)
-			draw_line(c1.lerp(c2, 0.15), c1.lerp(c2, 0.85), Color("#fffbe0", pulse * a), r * 0.38)
-			draw_line(c1.lerp(c2, 0.25), c1.lerp(c2, 0.75), Color(1, 1, 1, 0.7 * a), r * 0.12)
+			var up := -PI / 2 if horizontal else 0.0
+			_leaf(mid, up - 0.7 + sway, r * 0.5 * a, r * 0.17, Color("#c4ff8a", 0.95 * a))
+			_leaf(mid, up + 0.7 + sway, r * 0.42 * a, r * 0.14, Color("#a8f07a", 0.95 * a))
+			draw_circle(mid, r * 0.08, Color("#2f8a34", 0.9 * a))
+		Element.SUNNY: # light: a warm glowing heart with twinkling sparkles
+			var pulse := 0.5 + 0.5 * sin(t * 4.0 + seed)
+			draw_circle(mid, r * (0.38 + 0.08 * pulse), Color("#fffbe0", 0.35 * a))
+			draw_circle(mid, r * 0.2, Color(1, 1, 1, (0.45 + 0.3 * pulse) * a))
 			for k in 2:
-				var sp := c1.lerp(c2, 0.35 + 0.3 * k) + n * r * (0.3 if k == 0 else -0.3)
+				var sp := mid + Vector2.from_angle(t * 0.8 + k * PI + seed) * r * 0.42
 				_sparkle(sp, r * 0.24 * absf(sin(t * 4.0 + k * 2.0 + seed)) * a, Color(1, 1, 1, 0.95 * a))
-		Element.NOVA: # shadow: dark swirling wisps with tiny stars
-			for w in 2:
-				var wisp := PackedVector2Array()
-				for k in 13:
-					wisp.append(along.call(k / 12.0, r * 0.2, 1.0, t * 2.0 * (1 if w == 0 else -1) + seed + w * PI))
-				draw_polyline(wisp, Color("#1a0838", 0.8 * a) if w == 0 else Color("#d8c2ff", 0.35 * a), r * (0.16 if w == 0 else 0.06), true)
-			for k in 2:
-				var sp := c1.lerp(c2, fmod(seed * 0.3 + k * 0.45 + t * 0.05, 0.6) + 0.2) + n * r * (0.18 - 0.36 * k)
-				_sparkle(sp, r * 0.13 * absf(sin(t * 2.5 + k * 1.9 + seed)) * a, Color(1, 1, 1, 0.9 * a))
+		Element.NOVA: # shadow: a dark swirl in the joint with tiny stars orbiting
+			draw_circle(mid, r * 0.34, Color("#1a0838", 0.45 * a))
+			draw_circle(mid, r * 0.2, Color("#1a0838", 0.5 * a))
+			for k in 3:
+				var sp := mid + Vector2.from_angle(-t * 1.2 + k * TAU / 3 + seed) * r * 0.3
+				_sparkle(sp, r * 0.12 * (0.5 + 0.5 * absf(sin(t * 2.5 + k * 1.9 + seed))) * a, Color(1, 1, 1, 0.9 * a))
 
 
 func _flame(base: Vector2, half_w: float, h: float, sway: float, color: Color) -> void:
