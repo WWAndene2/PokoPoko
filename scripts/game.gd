@@ -67,6 +67,13 @@ var particles: Array = [] # {pos, vel, color, life, max, size}
 var orbs: Array = [] # {from, to, t, color, size, target}
 var piece_vis := [{"id": -1}, {"id": -1}] # per player: {id, x, ang}
 var link_birth := [{}, {}] # per player: Vector3i(x, y, dir) -> time the fusion formed
+# Soft bodies (see SoftPoko), per player: grid Pokos keyed by cell, plus the falling pair
+var bodies := [{}, {}]
+var piece_bodies := [[], []]
+var piece_body_id := [-1, -1]
+var body_serial := [Vector2i.ZERO, Vector2i.ZERO] # last seen (lock_serial, fall_serial)
+var land_done := [0.0, 0.0] # landing impacts already applied up to this player time
+var links := [[], []] # current fusions, for the element effects: [a, b, kind, grow]
 
 # _draw_blob layers, so fused groups can be drawn as one body
 const L_SHADE := 1
@@ -115,6 +122,12 @@ func _start_round() -> void:
 	orbs.clear()
 	piece_vis = [{"id": -1}, {"id": -1}]
 	link_birth = [{}, {}]
+	bodies = [{}, {}]
+	piece_bodies = [[], []]
+	piece_body_id = [-1, -1]
+	body_serial = [Vector2i.ZERO, Vector2i.ZERO]
+	land_done = [0.0, 0.0]
+	links = [[], []]
 	chain_text = ["", ""]
 	chain_text_t = [0.0, 0.0]
 	screen = Screen.PLAYING
@@ -151,6 +164,10 @@ func _process(delta: float) -> void:
 			players[i].update(delta)
 			_handle_events(i)
 	_update_piece_vis(delta)
+	if screen != Screen.MENU:
+		for i in players.size():
+			_sync_bodies(i)
+			_step_bodies(i, delta)
 	_update_fx(delta)
 	for i in 2:
 		chain_text_t[i] = maxf(0.0, chain_text_t[i] - delta)
@@ -437,96 +454,45 @@ func _draw_player(i: int) -> void:
 		draw_line(xc - Vector2(xr, xr), xc + Vector2(xr, xr), Color("#ff3b3b", 0.8), cell * 0.16)
 		draw_line(xc + Vector2(-xr, xr), xc + Vector2(xr, -xr), Color("#ff3b3b", 0.8), cell * 0.16)
 
-	var animating := p.state == Player.State.SETTLING or p.state == Player.State.GARBAGE
-	var still := func(c: Vector2i) -> bool:
-		return not (animating and p.drops.has(c)) and not (p.state == Player.State.POPPING and p.popping.has(c))
-
-	# Fusion: touching same-color Pokos stick together like jelly. Each body stretches toward
-	# its fused neighbours until the shapes overlap into one mass; no separate bridge is drawn.
-	var sticky := func(c: Vector2i) -> bool:
-		return still.call(c) and p.fall_offset(c) <= 0.0
-	var center := func(c: Vector2i) -> Vector2: return at.call(c.x + 0.5, c.y + 0.5)
-	var links := [] # [Vector2i a, Vector2i b, kind, grow]
-	var arms := {} # Vector2i -> [[direction, grow], ...]
-	var births := {}
-	for y in range(Board.HIDDEN, Board.H):
-		for x in Board.COLS:
-			var kind: int = b.grid[y][x]
-			var a := Vector2i(x, y)
-			if kind == 0 or kind == Board.GARBAGE or not sticky.call(a):
-				continue
-			for dir in [Vector2i.RIGHT, Vector2i.DOWN]:
-				var n: Vector2i = a + dir
-				if n.x < Board.COLS and n.y < Board.H and b.grid[n.y][n.x] == kind and sticky.call(n):
-					var key := Vector3i(x, y, 0 if dir == Vector2i.RIGHT else 1)
-					var born: float = link_birth[i].get(key, clock)
-					births[key] = born
-					var grow := _jelly_grow(clock - born)
-					links.append([a, n, kind, grow])
-					if not arms.has(a):
-						arms[a] = []
-					if not arms.has(n):
-						arms[n] = []
-					arms[a].append([Vector2(dir), grow])
-					arms[n].append([-Vector2(dir), grow])
-	link_birth[i] = births
-
-	# Squash spreads through a fused group: a Poko landing on its group makes the whole mass wobble
-	var squash := {}
-	for c in arms:
-		var k := _land_k(p, c)
-		for arm in arms[c]:
-			k += 0.45 * _land_k(p, c + Vector2i(arm[0]))
-		squash[c] = Vector2(1.0 + k, 1.0 - k)
-
-	for y in range(Board.HIDDEN, Board.H):
-		for x in Board.COLS:
-			var color: int = b.grid[y][x]
-			var c := Vector2i(x, y)
-			if color == 0 or arms.has(c):
-				continue
-			if p.state == Player.State.POPPING and p.popping.has(c):
-				# Swell and flash, then burst (particles spawn in _on_pop)
-				var pt := p.anim_t / Player.POP_TIME
-				var flash := int(p.anim_t / 0.06) % 2 == 1
-				var wobble := 1.0 + 0.12 * sin(p.anim_t * 40.0)
-				_draw_blob(at.call(x, y), color, cell, 1 + pt * 0.35, 1 - pt * pt, Color.WHITE if flash else null, Vector2(wobble, 2.0 - wobble))
-			else:
-				var off := p.fall_offset(c)
-				if off > 0:
-					# Stretched while falling
-					_draw_blob(at.call(x, y - off), color, cell, 1.0, 1.0, null, Vector2(0.9, 1.12))
-				else:
-					var idle := _idle(color, x, y)
-					_draw_blob(at.call(x, y) + idle.offset * cell, color, cell, 1.0, 1.0, null, _land_squash(p, c) * idle.squash, idle.tilt, idle.blink)
-
-	# Fused groups, layer by layer so the bodies blend into one: aura, shade, body, element life, faces
+	# Pokos are soft bodies (stepped in _step_bodies). Draw them layer by layer so fused
+	# bodies blend into one mass: aura, shade, body, element life, faces.
 	var r := cell / 2 - 2
-	for c in arms:
-		_draw_aura(b.grid[c.y][c.x], center.call(c), r)
+	var bod: Dictionary = bodies[i]
+	var popping := {}
+	if p.state == Player.State.POPPING:
+		for c in p.popping:
+			popping[c] = true
+	for l in links[i]:
+		for c in [l[0], l[1]]:
+			if bod.has(c):
+				_draw_aura(l[2], bod[c].center + jitter, r)
 	for layer in [L_SHADE, L_FILL]:
-		for c in arms:
-			_draw_blob(at.call(c.x, c.y), b.grid[c.y][c.x], cell, 1.0, 1.0, null, squash[c], 0.0, false, layer, arms[c])
-	for l in links:
-		_link_fx(l[2], center.call(l[0]), center.call(l[1]), r, l[3], float(l[0].x * 3 + l[0].y * 5) * 0.71)
-	for c in arms:
-		var idle := _idle(b.grid[c.y][c.x], c.x, c.y)
-		_draw_blob(at.call(c.x, c.y), b.grid[c.y][c.x], cell, 1.0, 1.0, null, squash[c], 0.0, idle.blink, L_DETAIL, arms[c])
+		for c in bod:
+			if not popping.has(c):
+				_draw_soft(bod[c], b.grid[c.y][c.x], jitter, layer)
+	for l in links[i]:
+		if bod.has(l[0]) and bod.has(l[1]):
+			_link_fx(l[2], bod[l[0]].center + jitter, bod[l[1]].center + jitter, r, l[3], float(l[0].x * 3 + l[0].y * 5) * 0.71)
+	for c in bod:
+		if not popping.has(c):
+			_draw_soft(bod[c], b.grid[c.y][c.x], jitter, L_DETAIL, 1.0, null, 1.0, _idle(b.grid[c.y][c.x], c.x, c.y).blink)
+	for c in popping:
+		if bod.has(c):
+			# Swell and flash, then burst (particles spawn in _on_pop)
+			var pt := p.anim_t / Player.POP_TIME
+			var flash := int(p.anim_t / 0.06) % 2 == 1
+			_draw_soft(bod[c], b.grid[c.y][c.x], jitter, L_SHADE | L_FILL | L_DETAIL, 1 - pt * pt, Color.WHITE if flash else null, 1 + pt * 0.35)
 
 	if b.has_piece and p.state == Player.State.FALLING:
 		var g := b.ghost_pos()
 		for pc in b.piece_cells(g):
 			if pc[0].y >= Board.HIDDEN:
 				_draw_blob(at.call(pc[0].x, pc[0].y), pc[1], cell, 0.45, 0.35)
-		# Smoothed pair: slides between columns and swings around the pivot when turning
-		var smooth := minf(1.0, p.fall_timer / p.fall_delay) if b.can_fall() else 0.0
-		var vis: Dictionary = piece_vis[i]
-		var pivot := Vector2(vis.get("x", b.pos.x), b.pos.y + smooth)
-		var sat := pivot + Vector2.from_angle(vis.get("ang", -PI / 2))
-		var ground := 1.0 - 0.06 * sin(p.time * 18.0) if not b.can_fall() else 1.0 # quiver during the grace period
-		for part in [[pivot, b.a], [sat, b.b]]:
-			if part[0].y >= Board.HIDDEN - 0.5:
-				_draw_blob(at.call(part[0].x, part[0].y), part[1], cell, 1.0, 1.0, null, Vector2(2.0 - ground, ground))
+		var pb: Array = piece_bodies[i]
+		if pb.size() == 2:
+			for k in 2:
+				if pb[k].center.y >= origin.y - cell * 0.5:
+					_draw_soft(pb[k], b.a if k == 0 else b.b, jitter, L_SHADE | L_FILL | L_DETAIL)
 
 	_draw_next(i, cell)
 
@@ -598,22 +564,16 @@ func _draw_pending(n: int, at: Vector2, cell: float) -> void:
 ## `kind` is a board value: 1..5 element, Board.GARBAGE for nuisance.
 ## `squash` scales around the Poko's bottom (x = width, y = height), `tilt` rotates it.
 func _draw_blob(at: Vector2, kind: int, size: float, scale: float = 1.0, alpha: float = 1.0, tint: Variant = null,
-		squash := Vector2.ONE, tilt := 0.0, blink := false, layers := L_SHADE | L_FILL | L_DETAIL, arms := []) -> void:
+		squash := Vector2.ONE, tilt := 0.0, blink := false, layers := L_SHADE | L_FILL | L_DETAIL) -> void:
 	var r := (size / 2 - 2) * scale
 	draw_set_transform(at + Vector2(size / 2, size / 2 + r), tilt, squash)
 	var c := Vector2(0, -r)
 	var base: Color = GARBAGE_COLOR if kind == Board.GARBAGE else COLORS[kind - 1]
 	var fill: Color = tint if tint != null else base
-	if arms.is_empty():
-		if layers & L_SHADE:
-			draw_circle(c + Vector2(0, r * 0.08), r, Color(base.darkened(0.35), alpha)) # bottom shade
-		if layers & L_FILL:
-			draw_circle(c, r * 0.96, Color(fill, alpha))
-	else:
-		if layers & L_SHADE:
-			draw_colored_polygon(_jelly_shape(c + Vector2(0, r * 0.08), r, arms, size), Color(base.darkened(0.35), alpha))
-		if layers & L_FILL:
-			draw_colored_polygon(_jelly_shape(c, r * 0.96, arms, size), Color(fill, alpha))
+	if layers & L_SHADE:
+		draw_circle(c + Vector2(0, r * 0.08), r, Color(base.darkened(0.35), alpha)) # bottom shade
+	if layers & L_FILL:
+		draw_circle(c, r * 0.96, Color(fill, alpha))
 	if not layers & L_DETAIL:
 		draw_set_transform(Vector2.ZERO)
 		return
@@ -675,45 +635,28 @@ func _draw_face(c: Vector2, r: float, element: int, ink: Color, blink := false) 
 # --- Animation and effects ---------------------------------------------------
 
 ## Damped spring after landing: squashed flat at impact, then wobbles back to round.
-func _land_squash(p: Player, c: Vector2i) -> Vector2:
-	var k := _land_k(p, c)
-	return Vector2(1.0 + k, 1.0 - k)
-
-
-## Squash amount (0 = round, > 0 = flattened) of the Poko at `c`.
-func _land_k(p: Player, c: Vector2i) -> float:
-	if not p.land.has(c):
-		return 0.0
-	var dt: float = p.time - p.land[c][0]
-	if dt < 0.0 or dt > 0.8:
-		return 0.0
-	return 0.22 * p.land[c][1] * exp(-6.5 * dt) * cos(21.0 * dt)
-
-
-## Idle "emotion" motion for a settled Poko. Offset is in cells.
+## Idle "emotion" of a Poko, expressed as physics inputs for its soft body:
+## offset (cells) moves its center, breath scales its rest size, jitter shakes it.
 func _idle(kind: int, x: int, y: int) -> Dictionary:
-	var res := {"offset": Vector2.ZERO, "squash": Vector2.ONE, "tilt": 0.0, "blink": false}
+	var res := {"offset": Vector2.ZERO, "breath": 1.0, "jitter": 0.0, "blink": false}
 	var ph := float(x * 7 + y * 13) * 0.37
 	var t := clock
 	match kind - 1:
 		Element.AQUA: # confident: deep, steady breathing; blinks now and then
-			var s := 0.03 * sin(t * 2.2 + ph)
-			res.squash = Vector2(1 + s, 1 + s)
+			res.breath = 1.0 + 0.035 * sin(t * 2.2 + ph)
 			res.blink = fmod(t + ph * 3.0, 5.0) < 0.12
-		Element.BLAZE: # aggressive: restless trembling
-			res.offset = Vector2(sin(t * 38.0 + ph) * 0.012, 0)
+		Element.BLAZE: # aggressive: restless trembling with bursts of anger
+			res.jitter = 0.05
 			var flare := fmod(t + ph, 3.0)
 			if flare < 0.3:
-				var k := sin(flare / 0.3 * PI) * 0.08
-				res.squash = Vector2(1 - k, 1 + k)
-		Element.LEAF: # calm: gentle sway
-			res.tilt = sin(t * 1.2 + ph) * 0.07
-		Element.SUNNY: # joyful: little hops
+				res.jitter = 0.16
+				res.breath = 1.0 + 0.05 * sin(flare / 0.3 * PI)
+		Element.LEAF: # calm: leans gently from side to side
+			res.offset = Vector2(sin(t * 1.2 + ph) * 0.035, 0)
+		Element.SUNNY: # joyful: little hops, landing squashes it
 			var u := fmod(t * 0.8 + ph, 2.0)
 			if u < 0.4:
-				var h := sin(u / 0.4 * PI)
-				res.offset = Vector2(0, -h * 0.1)
-				res.squash = Vector2(1 - h * 0.06, 1 + h * 0.06)
+				res.offset = Vector2(0, -sin(u / 0.4 * PI) * 0.12)
 		Element.NOVA: # mysterious: slow floating, long blinks
 			res.offset = Vector2(0, sin(t * 1.0 + ph) * 0.03)
 			res.blink = fmod(t + ph * 2.0, 4.0) < 0.3
@@ -813,22 +756,6 @@ func _jelly_grow(age: float) -> float:
 	if age >= FUSE_TIME:
 		return 1.0
 	return 1.0 - exp(-7.0 * age) * cos(16.0 * age)
-
-
-## Outline of a jelly Poko: a circle that bulges toward each fused neighbour with a wide,
-## soft shoulder, reaching past the cell edge so two neighbours overlap into one body.
-func _jelly_shape(c: Vector2, r: float, arms: Array, size: float) -> PackedVector2Array:
-	var reach := size / 2 - r + r * 0.55
-	var pts := PackedVector2Array()
-	for k in 48:
-		var ang := TAU * k / 48.0
-		var rad := r
-		for arm in arms:
-			var w := clampf((cos(ang - arm[0].angle()) - 0.42) / 0.58, 0.0, 1.0)
-			w = w * w * (3.0 - 2.0 * w)
-			rad = maxf(rad, r + reach * arm[1] * w)
-		pts.append(c + Vector2.from_angle(ang) * rad)
-	return pts
 
 
 ## Soft elemental glow behind a fused Poko.
@@ -932,3 +859,156 @@ func _sparkle(c: Vector2, size: float, color: Color) -> void:
 	for k in 8:
 		pts.append(c + Vector2.from_angle(k * PI / 4) * (size if k % 2 == 0 else size * 0.25))
 	draw_colored_polygon(pts, color)
+
+
+# --- Soft bodies ---------------------------------------------------------------
+
+## Keeps each Poko's soft body attached to it as the board changes (lock, falls, pops).
+func _sync_bodies(i: int) -> void:
+	var p := players[i]
+	var b := p.board
+	var bod: Dictionary = bodies[i]
+	if p.lock_serial != body_serial[i].x:
+		var pb: Array = piece_bodies[i]
+		if pb.size() == 2:
+			for e in p.last_lock:
+				bod[e[0]] = pb[1 if e[1] else 0]
+		piece_bodies[i] = []
+	if p.fall_serial != body_serial[i].y:
+		var moved := {}
+		var nb := {}
+		for dest in p.drops:
+			var src: Vector2i = dest - Vector2i(0, p.drops[dest])
+			if bod.has(src):
+				nb[dest] = bod[src]
+				moved[src] = true
+		for c in bod:
+			if not moved.has(c) and not nb.has(c):
+				nb[c] = bod[c]
+		bod = nb
+	body_serial[i] = Vector2i(p.lock_serial, p.fall_serial)
+	for c in bod.keys():
+		if c.y < Board.HIDDEN or b.grid[c.y][c.x] == 0:
+			bod.erase(c)
+	var r := _cell() / 2 - 2
+	for y in range(Board.HIDDEN, Board.H):
+		for x in Board.COLS:
+			if b.grid[y][x] != 0 and not bod.has(Vector2i(x, y)):
+				bod[Vector2i(x, y)] = SoftPoko.new(r)
+	bodies[i] = bod
+
+
+func _step_bodies(i: int, delta: float) -> void:
+	var p := players[i]
+	var b := p.board
+	var cell := _cell()
+	var r := cell / 2 - 2
+	var reach := cell / 2 - r + r * 0.55
+	var bod: Dictionary = bodies[i]
+	var resting := func(c: Vector2i) -> bool:
+		return p.fall_offset(c) <= 0.0 and not (p.state == Player.State.POPPING and p.popping.has(c))
+
+	# Fusions between resting same-color Pokos; each one snaps in like sticky jelly
+	var grow := {}
+	var births := {}
+	links[i] = []
+	for c in bod:
+		var kind: int = b.grid[c.y][c.x]
+		if kind == Board.GARBAGE or not resting.call(c):
+			continue
+		for d in [Vector2i.RIGHT, Vector2i.DOWN]:
+			var n: Vector2i = c + d
+			if n.x < Board.COLS and n.y < Board.H and b.grid[n.y][n.x] == kind and bod.has(n) and resting.call(n):
+				var key := Vector3i(c.x, c.y, 0 if d == Vector2i.RIGHT else 1)
+				births[key] = link_birth[i].get(key, clock)
+				grow[key] = _jelly_grow(clock - births[key])
+				links[i].append([c, n, kind, grow[key]])
+	link_birth[i] = births
+
+	# Landing impacts: flatten the Poko, and its fused group feels it too
+	for c in p.land:
+		var lt: float = p.land[c][0]
+		if lt > land_done[i] and lt <= p.time and bod.has(c):
+			var strength: float = p.land[c][1] * 5.0
+			bod[c].squash_kick(strength)
+			for d in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
+				var n: Vector2i = c + d
+				if bod.has(n) and b.grid[n.y][n.x] == b.grid[c.y][c.x]:
+					bod[n].squash_kick(strength * 0.5)
+	land_done[i] = p.time
+
+	for c in bod:
+		var kind: int = b.grid[c.y][c.x]
+		var home := _cell_center(i, c)
+		var fall := p.fall_offset(c)
+		var idle := _idle(kind, c.x, c.y)
+		var center: Vector2 = home - Vector2(0, fall * cell) + idle.offset * cell
+		var planes := []
+		var sticks := []
+		if fall <= 0.0:
+			for d in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
+				var n: Vector2i = c + d
+				var nd := Vector2(d)
+				# Contact plane at the cell edge, measured from the current (possibly hopping) center
+				var dist: float = cell / 2 - 1 - (center - home).dot(nd)
+				if n.x < 0 or n.x >= Board.COLS or n.y >= Board.H:
+					planes.append([nd, dist])
+					continue
+				if n.y < Board.HIDDEN:
+					continue
+				var nk: int = b.grid[n.y][n.x]
+				if nk == 0 or p.fall_offset(n) > 0.0:
+					continue
+				var key := Vector3i(mini(c.x, n.x), mini(c.y, n.y), 0 if d.y == 0 else 1)
+				if grow.has(key):
+					sticks.append([nd, grow[key], reach])
+				else:
+					planes.append([nd, dist])
+		bod[c].step(center, delta, planes, sticks, idle.breath, 0.0, idle.jitter * r)
+
+	# Falling pair: wobbles as it slides, swings when turning, squashes on the floor
+	if b.has_piece and p.state == Player.State.FALLING:
+		if piece_body_id[i] != p.piece_id or (piece_bodies[i] as Array).size() != 2:
+			piece_bodies[i] = [SoftPoko.new(r), SoftPoko.new(r)]
+			piece_body_id[i] = p.piece_id
+		var smooth := minf(1.0, p.fall_timer / p.fall_delay) if b.can_fall() else 0.0
+		var vis: Dictionary = piece_vis[i]
+		var pivot := Vector2(vis.get("x", b.pos.x), b.pos.y + smooth)
+		var sat := pivot + Vector2.from_angle(vis.get("ang", -PI / 2))
+		for k in 2:
+			var cp: Vector2 = pivot if k == 0 else sat
+			piece_bodies[i][k].step(_origin(i) + (cp + Vector2(0.5, 0.5 - Board.HIDDEN)) * cell, delta, [], [])
+
+
+## Draws one soft body. `scale` swells it (popping), `alpha`/`tint` fade or flash it.
+func _draw_soft(body: SoftPoko, kind: int, shift: Vector2, layers: int, alpha := 1.0, tint: Variant = null,
+		scale := 1.0, blink := false) -> void:
+	var r := body.r * scale
+	var base: Color = GARBAGE_COLOR if kind == Board.GARBAGE else COLORS[kind - 1]
+	var fill: Color = tint if tint != null else base
+	if layers & L_SHADE:
+		_soft_polygon(body.outline(shift + Vector2(0, r * 0.08), scale), body.center + shift, r, Color(base.darkened(0.35), alpha))
+	if layers & L_FILL:
+		_soft_polygon(body.outline(shift, scale * 0.96), body.center + shift, r * 0.96, Color(fill, alpha))
+	if not layers & L_DETAIL:
+		return
+	# Face and shine ride on the deformed body and squash with it
+	var sy := body.squash_ratio()
+	sy = clampf(sy, 0.75, 1.12)
+	draw_set_transform(body.center + shift + body.centroid() * scale * 0.3, 0.0, Vector2(1.0 / sy, sy))
+	draw_circle(Vector2(-r * 0.35, -r * 0.35), r * 0.28, Color(1, 1, 1, 0.45 * alpha))
+	if kind == Board.GARBAGE:
+		for sx in [-1, 1]:
+			draw_circle(Vector2(sx * r * 0.32, 0), r * 0.24, Color(INK, alpha * 0.7))
+			draw_circle(Vector2(sx * r * 0.32, 0), r * 0.14, Color(1, 1, 1, alpha))
+	else:
+		_draw_face(Vector2.ZERO, r, kind - 1, Color(INK, alpha), blink)
+	draw_set_transform(Vector2.ZERO)
+
+
+## Fills a soft-body outline; falls back to a circle if the ring ever folds over itself.
+func _soft_polygon(pts: PackedVector2Array, c: Vector2, r: float, color: Color) -> void:
+	if Geometry2D.triangulate_polygon(pts).is_empty():
+		draw_circle(c, r, color)
+	else:
+		draw_colored_polygon(pts, color)

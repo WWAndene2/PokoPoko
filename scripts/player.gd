@@ -30,6 +30,10 @@ var anim_t := 0.0
 var settle_time := 0.0 # duration of the current fall, from the longest drop
 var drops := {} # Vector2i -> fall distance (for the settle / garbage animation)
 var land := {} # Vector2i -> [land time, strength] for squash-and-bounce on landing
+# Lets the visuals keep each Poko's soft body attached to it as it moves
+var fall_serial := 0 # bumped when a new fall starts (drops = destination -> distance)
+var lock_serial := 0 # bumped when the pair locks; last_lock = [[cell, is_satellite], ...]
+var last_lock: Array = []
 var popping: Array = []
 var chain := 0
 var piece_id := 0
@@ -113,6 +117,7 @@ func fall_offset(c: Vector2i) -> float:
 
 ## Starts the fall animation for `new_drops` and records when each Poko lands.
 func _start_fall(new_drops: Array, strength: float) -> void:
+	fall_serial += 1
 	drops.clear()
 	var longest := 0.0
 	for d in new_drops:
@@ -154,8 +159,12 @@ func hard_drop() -> void:
 
 
 func _lock(strength: float = 0.8) -> void:
-	for pc in board.piece_cells():
-		land[pc[0]] = [time, strength]
+	lock_serial += 1
+	last_lock = []
+	var cells := board.piece_cells()
+	for k in cells.size():
+		land[cells[k][0]] = [time, strength]
+		last_lock.append([cells[k][0], k == 1])
 	board.lock()
 	_settle()
 
